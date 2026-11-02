@@ -19,6 +19,8 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 3
 elneb:
   jwt:
     secret: ${JWT_SECRET:change-this-development-secret-to-a-256-bit-value}
