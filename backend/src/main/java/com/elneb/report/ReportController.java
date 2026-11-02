@@ -51,40 +51,52 @@ public class ReportController {
     }
 
     @GetMapping("/attendance")
-    public List<AttendanceRow> attendance(@RequestParam(required = false) LocalDate from, @RequestParam(required = false) LocalDate to, Authentication authentication) {
+    public List<AttendanceRow> attendance(@RequestParam(required = false) LocalDate from, @RequestParam(required = false) LocalDate to,
+                                          @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "25") int size,
+                                          @RequestParam(required = false) UUID teacherId, @RequestParam(required = false) UUID classroomId,
+                                          Authentication authentication) {
         DateRange range = DateRange.of(from, to);
         return records.findAll().stream().filter(row -> range.includes(row.getSession().getSessionDate()))
-                .filter(row -> owns(row.getTeacher(), authentication)).sorted(Comparator.comparing(AttendanceRecord::getCheckInAt).reversed())
+                .filter(row -> owns(row.getTeacher(), authentication))
+                .filter(row -> teacherId == null || row.getTeacher().getId().equals(teacherId))
+                .filter(row -> classroomId == null || row.getSession().getClassrooms().stream().anyMatch(room -> room.getId().equals(classroomId)))
+                .sorted(Comparator.comparing(AttendanceRecord::getCheckInAt).reversed())
                 .map(row -> new AttendanceRow(row.getSession().getSessionDate(), row.getTeacher().getFullName(),
                         row.getTeacher().getEmployeeCode(), row.getCardUid(), row.getCheckInAt(), row.getCheckOutAt(),
                         row.getStatus(), row.getSession().getClassrooms().stream().map(Classroom::getName).sorted().toList()))
-                .toList();
+                .toList().stream().skip((long) Math.max(page, 0) * boundedSize(size)).limit(boundedSize(size)).toList();
     }
 
     @GetMapping("/classroom-utilization")
-    public List<ClassroomUtilization> classroomUtilization(@RequestParam(required = false) LocalDate from, @RequestParam(required = false) LocalDate to, Authentication authentication) {
+    public List<ClassroomUtilization> classroomUtilization(@RequestParam(required = false) LocalDate from, @RequestParam(required = false) LocalDate to,
+                                                            @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "25") int size,
+                                                            Authentication authentication) {
         DateRange range = DateRange.of(from, to);
         Map<UUID, Long> counts = new HashMap<>();
         sessions.findAll().stream().filter(row -> range.includes(row.getSessionDate()))
                 .forEach(row -> row.getClassrooms().stream().filter(room -> owns(room, authentication)).forEach(room -> counts.merge(room.getId(), 1L, Long::sum)));
         return classrooms.findAll().stream().filter(room -> owns(room, authentication)).map(room -> new ClassroomUtilization(room.getId(), room.getName(),
-                room.getCapacity(), counts.getOrDefault(room.getId(), 0L))).toList();
+                room.getCapacity(), counts.getOrDefault(room.getId(), 0L))).toList().stream().skip((long) Math.max(page, 0) * boundedSize(size)).limit(boundedSize(size)).toList();
     }
 
     @GetMapping("/teacher-activity")
-    public List<TeacherActivity> teacherActivity(@RequestParam(required = false) LocalDate from, @RequestParam(required = false) LocalDate to, Authentication authentication) {
+    public List<TeacherActivity> teacherActivity(@RequestParam(required = false) LocalDate from, @RequestParam(required = false) LocalDate to,
+                                                  @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "25") int size,
+                                                  Authentication authentication) {
         DateRange range = DateRange.of(from, to);
         Map<UUID, Long> counts = new HashMap<>();
         records.findAll().stream().filter(row -> range.includes(row.getSession().getSessionDate()))
                 .filter(row -> owns(row.getTeacher(), authentication)).forEach(row -> counts.merge(row.getTeacher().getId(), 1L, Long::sum));
         return teachers.findAll().stream().filter(teacher -> owns(teacher, authentication)).map(teacher -> new TeacherActivity(teacher.getId(), teacher.getEmployeeCode(),
-                teacher.getFullName(), teacher.getDepartment(), counts.getOrDefault(teacher.getId(), 0L))).toList();
+                teacher.getFullName(), teacher.getDepartment(), counts.getOrDefault(teacher.getId(), 0L))).toList().stream()
+                .skip((long) Math.max(page, 0) * boundedSize(size)).limit(boundedSize(size)).toList();
     }
 
     @GetMapping("/device-uptime")
-    public List<DeviceUptime> deviceUptime(Authentication authentication) {
+    public List<DeviceUptime> deviceUptime(@RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "25") int size, Authentication authentication) {
         return devices.findAll().stream().filter(device -> owns(device.getClassroom(), authentication)).map(device -> new DeviceUptime(device.getId(), device.getDeviceCode(),
-                device.getClassroom().getName(), device.getStatus().name(), device.getLastSeenAt())).toList();
+                device.getClassroom().getName(), device.getStatus().name(), device.getLastSeenAt())).toList().stream()
+                .skip((long) Math.max(page, 0) * boundedSize(size)).limit(boundedSize(size)).toList();
     }
 
     @GetMapping("/export")
@@ -104,19 +116,19 @@ public class ReportController {
 
     private String csv(String type, LocalDate from, LocalDate to, Authentication authentication) {
         if (type.equalsIgnoreCase("classroom-utilization")) {
-            return rows(List.of("Classroom", "Capacity", "Sessions"), classroomUtilization(from, to, authentication).stream()
+            return rows(List.of("Classroom", "Capacity", "Sessions"), classroomUtilization(from, to, 0, 10000, authentication).stream()
                     .map(row -> List.of(row.name(), row.capacity(), row.sessions())).toList());
         }
         if (type.equalsIgnoreCase("teacher-activity")) {
-            return rows(List.of("Employee Code", "Teacher", "Department", "Attendance Events"), teacherActivity(from, to, authentication).stream()
+            return rows(List.of("Employee Code", "Teacher", "Department", "Attendance Events"), teacherActivity(from, to, 0, 10000, authentication).stream()
                     .map(row -> List.of(row.employeeCode(), row.fullName(), row.department(), row.attendanceEvents())).toList());
         }
         if (type.equalsIgnoreCase("device-uptime")) {
-            return rows(List.of("Device Code", "Classroom", "Status", "Last Seen"), deviceUptime(authentication).stream()
+            return rows(List.of("Device Code", "Classroom", "Status", "Last Seen"), deviceUptime(0, 10000, authentication).stream()
                     .map(row -> List.of(row.deviceCode(), row.classroomName(), row.status(), row.lastSeenAt())).toList());
         }
         return rows(List.of("Date", "Teacher", "Employee Code", "RFID", "Check In", "Check Out", "Status", "Classrooms"),
-                attendance(from, to, authentication).stream().map(row -> List.of(row.date(), row.teacher(), row.employeeCode(), row.cardUid(),
+                attendance(from, to, 0, 10000, null, null, authentication).stream().map(row -> List.of(row.date(), row.teacher(), row.employeeCode(), row.cardUid(),
                         row.checkIn(), row.checkOut(), row.status(), String.join(" | ", row.classrooms()))).toList());
     }
 
@@ -130,6 +142,11 @@ public class ReportController {
 
     private static String csvValue(Object value) {
         return "\"" + Objects.toString(value, "").replace("\"", "\"\"") + "\"";
+    }
+
+    private static int boundedSize(int size) {
+        if (size < 1) return 25;
+        return Math.min(size, 100);
     }
 
     private boolean owns(Classroom classroom, Authentication authentication) {

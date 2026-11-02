@@ -10,6 +10,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 
 import java.util.UUID;
+import java.util.Objects;
 
 @Service
 public class TenantAccessService {
@@ -33,6 +34,11 @@ public class TenantAccessService {
 
     public UUID tenantId(Authentication authentication) {
         return current(authentication).getTenant() == null ? null : current(authentication).getTenant().getId();
+    }
+
+    public void requireTenant(UUID tenantId, Authentication authentication) {
+        if (isSuperAdmin(authentication)) return;
+        if (!Objects.equals(tenantId(authentication), tenantId)) throw new AccessDeniedException("Tenant access denied");
     }
 
     public void requireInstitution(UUID institutionId, Authentication authentication) {

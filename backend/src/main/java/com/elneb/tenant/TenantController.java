@@ -7,14 +7,17 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
+import org.springframework.security.core.Authentication;
+import com.elneb.security.TenantAccessService;
 
 @RestController
 @RequestMapping("/api/tenants")
 public class TenantController {
     private final TenantRepository tenants;
+    private final TenantAccessService access;
 
-    public TenantController(TenantRepository tenants) {
-        this.tenants = tenants;
+    public TenantController(TenantRepository tenants, TenantAccessService access) {
+        this.tenants = tenants; this.access = access;
     }
 
     @PostMapping
@@ -29,7 +32,8 @@ public class TenantController {
 
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','INSTITUTION_ADMIN')")
-    public TenantResponse get(@PathVariable UUID id) {
+    public TenantResponse get(@PathVariable UUID id, Authentication authentication) {
+        access.requireTenant(id, authentication);
         return TenantResponse.from(tenants.findById(id).orElseThrow(() -> new IllegalArgumentException("Tenant not found")));
     }
 

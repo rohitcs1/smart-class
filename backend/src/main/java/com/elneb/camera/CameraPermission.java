@@ -11,4 +11,6 @@ public class CameraPermission extends UuidEntitySupport {
     protected CameraPermission(){}
     public CameraPermission(Classroom classroom,User user){this.classroom=classroom;this.user=user;}
     public boolean isActive(){return active;} public Classroom getClassroom(){return classroom;}
+    public User getUser(){return user;}
+    public void setActive(boolean active){this.active=active;}
 }

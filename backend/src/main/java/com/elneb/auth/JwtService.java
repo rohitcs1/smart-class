@@ -26,11 +26,16 @@ public class JwtService {
     }
 
     public String create(User user) {
+        return createScoped(user, null);
+    }
+
+    public String createScoped(User user, String scope) {
         Instant now = Instant.now();
-        return Jwts.builder().subject(user.getId().toString()).claim("role", user.getRole().name())
+        var builder = Jwts.builder().subject(user.getId().toString()).claim("role", user.getRole().name())
                 .claim("email", user.getEmail()).issuedAt(Date.from(now))
-                .expiration(Date.from(now.plusSeconds(expirationMinutes * 60)))
-                .signWith(key).compact();
+                .expiration(Date.from(now.plusSeconds(scope == null ? expirationMinutes * 60 : 300)));
+        if (scope != null) builder.claim("scope", scope);
+        return builder.signWith(key).compact();
     }
 
     public Claims parse(String token) {

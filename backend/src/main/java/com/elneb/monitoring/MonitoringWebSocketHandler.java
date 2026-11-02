@@ -16,7 +16,7 @@ public class MonitoringWebSocketHandler extends TextWebSocketHandler {
     @Override public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         String token=session.getUri().getQuery()==null?null:java.net.URLDecoder.decode(session.getUri().getQuery().replaceFirst("^token=",""),java.nio.charset.StandardCharsets.UTF_8);
         if(token==null){session.close(CloseStatus.NOT_ACCEPTABLE.withReason("Authentication required"));return;}
-        try{Claims claims=jwt.parse(token);session.getAttributes().put("userId",claims.getSubject());sessions.add(session);}
+        try{Claims claims=jwt.parse(token); if(!"monitoring:ws".equals(claims.get("scope", String.class))) throw new IllegalArgumentException("Invalid scope"); session.getAttributes().put("userId",claims.getSubject());sessions.add(session);}
         catch(RuntimeException ex){session.close(CloseStatus.NOT_ACCEPTABLE.withReason("Invalid token"));}
     }
     @Override public void afterConnectionClosed(WebSocketSession session,CloseStatus status){sessions.remove(session);}
