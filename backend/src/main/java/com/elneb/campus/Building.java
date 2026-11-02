@@ -18,4 +18,6 @@ public class Building extends UuidEntitySupport {
     public Campus getCampus() { return campus; }
     public String getName() { return name; }
     public boolean isActive() { return active; }
+    public void update(String name) { this.name = name.trim(); }
+    public void setActive(boolean active) { this.active = active; }
 }

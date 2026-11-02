@@ -21,4 +21,5 @@ public class RfidCard extends UuidEntitySupport {
     public Teacher getTeacher() { return teacher; }
     public String getCardUid() { return cardUid; }
     public boolean isActive() { return active; }
+    public void setActive(boolean active) { this.active = active; }
 }

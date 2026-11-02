@@ -27,4 +27,6 @@ public class Campus extends UuidEntitySupport {
     public String getName() { return name; }
     public String getAddress() { return address; }
     public boolean isActive() { return active; }
+    public void update(String name, String address) { this.name = name.trim(); this.address = address; }
+    public void setActive(boolean active) { this.active = active; }
 }

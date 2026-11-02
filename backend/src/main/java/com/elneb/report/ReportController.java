@@ -10,6 +10,8 @@ import org.springframework.http.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.security.core.Authentication;
+import com.elneb.security.TenantAccessService;
 
 import java.nio.charset.StandardCharsets;
 import java.time.*;
@@ -25,30 +27,34 @@ public class ReportController {
     private final ClassroomRepository classrooms;
     private final TeacherRepository teachers;
     private final IotDeviceRepository devices;
+    private final TenantAccessService access;
 
     public ReportController(AttendanceRecordRepository records, MergedSessionRepository sessions,
                             ClassroomRepository classrooms, TeacherRepository teachers,
-                            IotDeviceRepository devices) {
+                            IotDeviceRepository devices, TenantAccessService access) {
         this.records = records; this.sessions = sessions; this.classrooms = classrooms;
-        this.teachers = teachers; this.devices = devices;
+        this.teachers = teachers; this.devices = devices; this.access = access;
     }
 
     @GetMapping("/summary")
-    public Summary summary(@RequestParam(required = false) LocalDate from, @RequestParam(required = false) LocalDate to) {
+    public Summary summary(@RequestParam(required = false) LocalDate from, @RequestParam(required = false) LocalDate to, Authentication authentication) {
         DateRange range = DateRange.of(from, to);
-        List<MergedSession> sessionRows = sessions.findAll().stream().filter(row -> range.includes(row.getSessionDate())).toList();
-        List<AttendanceRecord> attendanceRows = records.findAll().stream().filter(row -> range.includes(row.getSession().getSessionDate())).toList();
-        long online = devices.findAll().stream().filter(device -> device.getStatus() == DeviceStatus.ONLINE).count();
-        return new Summary(sessionRows.size(), attendanceRows.size(), classrooms.count(), teachers.count(), devices.count(), online,
+        List<MergedSession> sessionRows = sessions.findAll().stream().filter(row -> range.includes(row.getSessionDate()) && owns(row.getTeacher(), authentication)).toList();
+        List<AttendanceRecord> attendanceRows = records.findAll().stream().filter(row -> range.includes(row.getSession().getSessionDate()) && owns(row.getTeacher(), authentication)).toList();
+        long classroomCount = classrooms.findAll().stream().filter(row -> owns(row, authentication)).count();
+        long teacherCount = teachers.findAll().stream().filter(row -> owns(row, authentication)).count();
+        long deviceCount = devices.findAll().stream().filter(row -> owns(row.getClassroom(), authentication)).count();
+        long online = devices.findAll().stream().filter(device -> device.getStatus() == DeviceStatus.ONLINE && owns(device.getClassroom(), authentication)).count();
+        return new Summary(sessionRows.size(), attendanceRows.size(), classroomCount, teacherCount, deviceCount, online,
                 attendanceRows.stream().filter(row -> row.getStatus().equals("PRESENT")).count(),
                 attendanceRows.stream().filter(row -> row.getStatus().equals("COMPLETED")).count());
     }
 
     @GetMapping("/attendance")
-    public List<AttendanceRow> attendance(@RequestParam(required = false) LocalDate from, @RequestParam(required = false) LocalDate to) {
+    public List<AttendanceRow> attendance(@RequestParam(required = false) LocalDate from, @RequestParam(required = false) LocalDate to, Authentication authentication) {
         DateRange range = DateRange.of(from, to);
         return records.findAll().stream().filter(row -> range.includes(row.getSession().getSessionDate()))
-                .sorted(Comparator.comparing(AttendanceRecord::getCheckInAt).reversed())
+                .filter(row -> owns(row.getTeacher(), authentication)).sorted(Comparator.comparing(AttendanceRecord::getCheckInAt).reversed())
                 .map(row -> new AttendanceRow(row.getSession().getSessionDate(), row.getTeacher().getFullName(),
                         row.getTeacher().getEmployeeCode(), row.getCardUid(), row.getCheckInAt(), row.getCheckOutAt(),
                         row.getStatus(), row.getSession().getClassrooms().stream().map(Classroom::getName).sorted().toList()))
@@ -56,28 +62,28 @@ public class ReportController {
     }
 
     @GetMapping("/classroom-utilization")
-    public List<ClassroomUtilization> classroomUtilization(@RequestParam(required = false) LocalDate from, @RequestParam(required = false) LocalDate to) {
+    public List<ClassroomUtilization> classroomUtilization(@RequestParam(required = false) LocalDate from, @RequestParam(required = false) LocalDate to, Authentication authentication) {
         DateRange range = DateRange.of(from, to);
         Map<UUID, Long> counts = new HashMap<>();
         sessions.findAll().stream().filter(row -> range.includes(row.getSessionDate()))
-                .forEach(row -> row.getClassrooms().forEach(room -> counts.merge(room.getId(), 1L, Long::sum)));
-        return classrooms.findAll().stream().map(room -> new ClassroomUtilization(room.getId(), room.getName(),
+                .forEach(row -> row.getClassrooms().stream().filter(room -> owns(room, authentication)).forEach(room -> counts.merge(room.getId(), 1L, Long::sum)));
+        return classrooms.findAll().stream().filter(room -> owns(room, authentication)).map(room -> new ClassroomUtilization(room.getId(), room.getName(),
                 room.getCapacity(), counts.getOrDefault(room.getId(), 0L))).toList();
     }
 
     @GetMapping("/teacher-activity")
-    public List<TeacherActivity> teacherActivity(@RequestParam(required = false) LocalDate from, @RequestParam(required = false) LocalDate to) {
+    public List<TeacherActivity> teacherActivity(@RequestParam(required = false) LocalDate from, @RequestParam(required = false) LocalDate to, Authentication authentication) {
         DateRange range = DateRange.of(from, to);
         Map<UUID, Long> counts = new HashMap<>();
         records.findAll().stream().filter(row -> range.includes(row.getSession().getSessionDate()))
-                .forEach(row -> counts.merge(row.getTeacher().getId(), 1L, Long::sum));
-        return teachers.findAll().stream().map(teacher -> new TeacherActivity(teacher.getId(), teacher.getEmployeeCode(),
+                .filter(row -> owns(row.getTeacher(), authentication)).forEach(row -> counts.merge(row.getTeacher().getId(), 1L, Long::sum));
+        return teachers.findAll().stream().filter(teacher -> owns(teacher, authentication)).map(teacher -> new TeacherActivity(teacher.getId(), teacher.getEmployeeCode(),
                 teacher.getFullName(), teacher.getDepartment(), counts.getOrDefault(teacher.getId(), 0L))).toList();
     }
 
     @GetMapping("/device-uptime")
-    public List<DeviceUptime> deviceUptime() {
-        return devices.findAll().stream().map(device -> new DeviceUptime(device.getId(), device.getDeviceCode(),
+    public List<DeviceUptime> deviceUptime(Authentication authentication) {
+        return devices.findAll().stream().filter(device -> owns(device.getClassroom(), authentication)).map(device -> new DeviceUptime(device.getId(), device.getDeviceCode(),
                 device.getClassroom().getName(), device.getStatus().name(), device.getLastSeenAt())).toList();
     }
 
@@ -85,8 +91,8 @@ public class ReportController {
     public ResponseEntity<ByteArrayResource> export(@RequestParam(defaultValue = "attendance") String type,
                                                     @RequestParam(defaultValue = "csv") String format,
                                                     @RequestParam(required = false) LocalDate from,
-                                                    @RequestParam(required = false) LocalDate to) {
-        String csv = csv(type, from, to);
+                                                    @RequestParam(required = false) LocalDate to, Authentication authentication) {
+        String csv = csv(type, from, to, authentication);
         boolean pdf = format.equalsIgnoreCase("pdf");
         byte[] content = pdf ? SimplePdf.document(type, csv) : csv.getBytes(StandardCharsets.UTF_8);
         String extension = pdf ? "pdf" : "csv";
@@ -96,21 +102,21 @@ public class ReportController {
                 .body(new ByteArrayResource(content));
     }
 
-    private String csv(String type, LocalDate from, LocalDate to) {
+    private String csv(String type, LocalDate from, LocalDate to, Authentication authentication) {
         if (type.equalsIgnoreCase("classroom-utilization")) {
-            return rows(List.of("Classroom", "Capacity", "Sessions"), classroomUtilization(from, to).stream()
+            return rows(List.of("Classroom", "Capacity", "Sessions"), classroomUtilization(from, to, authentication).stream()
                     .map(row -> List.of(row.name(), row.capacity(), row.sessions())).toList());
         }
         if (type.equalsIgnoreCase("teacher-activity")) {
-            return rows(List.of("Employee Code", "Teacher", "Department", "Attendance Events"), teacherActivity(from, to).stream()
+            return rows(List.of("Employee Code", "Teacher", "Department", "Attendance Events"), teacherActivity(from, to, authentication).stream()
                     .map(row -> List.of(row.employeeCode(), row.fullName(), row.department(), row.attendanceEvents())).toList());
         }
         if (type.equalsIgnoreCase("device-uptime")) {
-            return rows(List.of("Device Code", "Classroom", "Status", "Last Seen"), deviceUptime().stream()
+            return rows(List.of("Device Code", "Classroom", "Status", "Last Seen"), deviceUptime(authentication).stream()
                     .map(row -> List.of(row.deviceCode(), row.classroomName(), row.status(), row.lastSeenAt())).toList());
         }
         return rows(List.of("Date", "Teacher", "Employee Code", "RFID", "Check In", "Check Out", "Status", "Classrooms"),
-                attendance(from, to).stream().map(row -> List.of(row.date(), row.teacher(), row.employeeCode(), row.cardUid(),
+                attendance(from, to, authentication).stream().map(row -> List.of(row.date(), row.teacher(), row.employeeCode(), row.cardUid(),
                         row.checkIn(), row.checkOut(), row.status(), String.join(" | ", row.classrooms()))).toList());
     }
 
@@ -124,6 +130,16 @@ public class ReportController {
 
     private static String csvValue(Object value) {
         return "\"" + Objects.toString(value, "").replace("\"", "\"\"") + "\"";
+    }
+
+    private boolean owns(Classroom classroom, Authentication authentication) {
+        try { access.requireClassroom(classroom, authentication); return true; }
+        catch (org.springframework.security.access.AccessDeniedException denied) { return false; }
+    }
+
+    private boolean owns(com.elneb.teacher.Teacher teacher, Authentication authentication) {
+        try { access.requireTeacher(teacher, authentication); return true; }
+        catch (org.springframework.security.access.AccessDeniedException denied) { return false; }
     }
 
     private record DateRange(LocalDate from, LocalDate to) {

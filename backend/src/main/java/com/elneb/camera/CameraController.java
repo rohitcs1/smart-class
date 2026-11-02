@@ -12,30 +12,37 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
 import java.io.*;
 import java.net.*;
 import java.util.*;
+import com.elneb.security.TenantAccessService;
+import org.springframework.security.core.Authentication;
 
 @RestController @RequestMapping("/api/cameras")
 public class CameraController {
     private final ClassroomRepository classrooms; private final UserRepository users; private final CameraPermissionRepository permissions;
-    public CameraController(ClassroomRepository classrooms,UserRepository users,CameraPermissionRepository permissions){this.classrooms=classrooms;this.users=users;this.permissions=permissions;}
+    private final TenantAccessService access;
+    public CameraController(ClassroomRepository classrooms,UserRepository users,CameraPermissionRepository permissions, TenantAccessService access){this.classrooms=classrooms;this.users=users;this.permissions=permissions;this.access=access;}
     @PostMapping("/{classroomId}/permission")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','INSTITUTION_ADMIN')")
-    public PermissionResponse grant(@PathVariable UUID classroomId,@Valid @RequestBody PermissionRequest request){
+    public PermissionResponse grant(@PathVariable UUID classroomId,@Valid @RequestBody PermissionRequest request, Authentication authentication){
         Classroom room=classrooms.findById(classroomId).orElseThrow(()->new IllegalArgumentException("Classroom not found"));
+        access.requireClassroom(room, authentication);
         User user=users.findById(request.userId()).orElseThrow(()->new IllegalArgumentException("User not found"));
+        if (!access.isSuperAdmin(authentication) && (user.getTenant() == null || !user.getTenant().getId().equals(access.current(authentication).getTenant().getId()))) throw new org.springframework.security.access.AccessDeniedException("User is outside your tenant");
         CameraPermission permission=permissions.findByClassroomIdAndUserId(classroomId,user.getId()).orElseGet(()->new CameraPermission(room,user));
         return new PermissionResponse(permissions.save(permission).getId(),classroomId,user.getId());
     }
     @PutMapping("/{classroomId}/source")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','INSTITUTION_ADMIN')")
-    public void setSource(@PathVariable UUID classroomId,@Valid @RequestBody SourceRequest request){
+    public void setSource(@PathVariable UUID classroomId,@Valid @RequestBody SourceRequest request, Authentication authentication){
         Classroom room=classrooms.findById(classroomId).orElseThrow(()->new IllegalArgumentException("Classroom not found"));
+        access.requireClassroom(room, authentication);
         try{URI uri=URI.create(request.cameraUrl()); if(!List.of("http","https").contains(uri.getScheme())||uri.getHost()==null)throw new IllegalArgumentException("Camera URL must be a valid HTTP(S) URL");}catch(IllegalArgumentException ex){throw new IllegalArgumentException("Camera URL must be a valid HTTP(S) URL");}
         room.setCameraUrl(request.cameraUrl()); classrooms.save(room);
     }
     @GetMapping(value="/{classroomId}/stream",produces="multipart/x-mixed-replace; boundary=frame")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<StreamingResponseBody> stream(@PathVariable UUID classroomId){
+    public ResponseEntity<StreamingResponseBody> stream(@PathVariable UUID classroomId, Authentication authentication){
         Classroom room=classrooms.findById(classroomId).orElseThrow(()->new IllegalArgumentException("Classroom not found"));
+        access.requireClassroom(room, authentication);
         UUID userId=UUID.fromString(SecurityContextHolder.getContext().getAuthentication().getName());
         User user=users.findById(userId).orElseThrow(()->new IllegalArgumentException("User not found"));
         boolean admin=user.getRole()==Role.SUPER_ADMIN||user.getRole()==Role.INSTITUTION_ADMIN;

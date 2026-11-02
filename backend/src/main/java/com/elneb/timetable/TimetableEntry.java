@@ -25,4 +25,10 @@ public class TimetableEntry extends UuidEntitySupport {
     }
     public UUIDParts parts() { return new UUIDParts(classroom.getId(), teacher.getId(), dayOfWeek, subject, startsAt, endsAt, active); }
     public record UUIDParts(java.util.UUID classroomId, java.util.UUID teacherId, DayOfWeek dayOfWeek, String subject, LocalTime startsAt, LocalTime endsAt, boolean active) {}
+    public Classroom getClassroom() { return classroom; }
+    public Teacher getTeacher() { return teacher; }
+    public void update(Teacher teacher, DayOfWeek day, String subject, LocalTime startsAt, LocalTime endsAt) {
+        this.teacher = teacher; this.dayOfWeek = day; this.subject = subject.trim(); this.startsAt = startsAt; this.endsAt = endsAt;
+    }
+    public void setActive(boolean active) { this.active = active; }
 }

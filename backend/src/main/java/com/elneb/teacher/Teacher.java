@@ -30,4 +30,10 @@ public class Teacher extends UuidEntitySupport {
     public String getEmail() { return email; }
     public String getDepartment() { return department; }
     public boolean isActive() { return active; }
+    public Institution getInstitution() { return institution; }
+    public void update(String employeeCode, String fullName, String email, String department) {
+        this.employeeCode = employeeCode.trim().toUpperCase(); this.fullName = fullName.trim();
+        this.email = email; this.department = department;
+    }
+    public void setActive(boolean active) { this.active = active; }
 }

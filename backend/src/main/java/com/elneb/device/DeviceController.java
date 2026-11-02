@@ -15,6 +15,8 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.*;
 import com.elneb.monitoring.MonitoringWebSocketHandler;
+import com.elneb.security.TenantAccessService;
+import org.springframework.security.core.Authentication;
 
 @RestController
 public class DeviceController {
@@ -27,26 +29,29 @@ public class DeviceController {
     private final MergedSessionRepository sessions;
     private final AttendanceRecordRepository records;
     private final MonitoringWebSocketHandler monitoring;
+    private final TenantAccessService access;
 
     public DeviceController(IotDeviceRepository devices, ClassroomRepository classrooms, PasswordEncoder passwords,
                             RfidCardRepository cards, TeacherRepository teachers, MergedSessionRepository sessions,
-                            AttendanceRecordRepository records, MonitoringWebSocketHandler monitoring) {
+                            AttendanceRecordRepository records, MonitoringWebSocketHandler monitoring, TenantAccessService access) {
         this.devices = devices; this.classrooms = classrooms; this.passwords = passwords; this.cards = cards;
         this.teachers = teachers; this.sessions = sessions; this.records = records;
-        this.monitoring = monitoring;
+        this.monitoring = monitoring; this.access = access;
     }
 
     @GetMapping("/api/devices/classroom/{classroomId}")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','INSTITUTION_ADMIN','DEVICE_ADMIN')")
-    public List<DeviceResponse> list(@PathVariable UUID classroomId) {
+    public List<DeviceResponse> list(@PathVariable UUID classroomId, Authentication authentication) {
+        access.requireClassroom(classrooms.findById(classroomId).orElseThrow(() -> new IllegalArgumentException("Classroom not found")), authentication);
         return devices.findAllByClassroomIdOrderByDeviceCode(classroomId).stream().map(DeviceResponse::from).toList();
     }
 
     @PostMapping("/api/devices")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','INSTITUTION_ADMIN')")
-    public ProvisionResponse provision(@Valid @RequestBody ProvisionRequest request) {
+    public ProvisionResponse provision(@Valid @RequestBody ProvisionRequest request, Authentication authentication) {
         if (devices.existsByDeviceCodeIgnoreCase(request.deviceCode())) throw new IllegalArgumentException("Device code is already in use");
         Classroom classroom = classrooms.findById(request.classroomId()).orElseThrow(() -> new IllegalArgumentException("Classroom not found"));
+        access.requireClassroom(classroom, authentication);
         String setupToken = randomToken();
         IotDevice device = devices.save(new IotDevice(classroom, request.deviceCode().trim().toUpperCase(), passwords.encode(setupToken)));
         return ProvisionResponse.from(device, setupToken);
@@ -55,8 +60,9 @@ public class DeviceController {
     @GetMapping(value = "/api/devices/{deviceId}/firmware", produces = "text/plain")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','INSTITUTION_ADMIN')")
     public ResponseEntity<StreamingResponseBody> firmware(@PathVariable UUID deviceId, @RequestParam String setupToken,
-                                                            @RequestParam String wifiSsid, @RequestParam String wifiPassword, @RequestParam String apiBaseUrl) {
+                                                            @RequestParam String wifiSsid,                                                             @RequestParam String wifiPassword, @RequestParam String apiBaseUrl, Authentication authentication) {
         IotDevice device = devices.findById(deviceId).orElseThrow(() -> new IllegalArgumentException("Device not found"));
+        access.requireClassroom(device.getClassroom(), authentication);
         authenticate(device.getDeviceCode(), setupToken);
         String source = firmwareTemplate()
                 .replace("REPLACE_WITH_WIFI_SSID", escape(wifiSsid))

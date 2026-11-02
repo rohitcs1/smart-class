@@ -30,4 +30,6 @@ public class Classroom extends UuidEntitySupport {
     public boolean isActive() { return active; }
     public String getCameraUrl() { return cameraUrl; }
     public void setCameraUrl(String cameraUrl) { this.cameraUrl = cameraUrl == null || cameraUrl.isBlank() ? null : cameraUrl.trim(); }
+    public void update(String name, int capacity, String roomType) { this.name = name.trim(); this.capacity = capacity; this.roomType = roomType.trim(); }
+    public void setActive(boolean active) { this.active = active; }
 }
