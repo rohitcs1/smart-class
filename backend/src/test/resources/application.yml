@@ -1,0 +1,22 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:elneb;MODE=MySQL;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+elneb:
+  jwt:
+    secret: test-secret-that-is-at-least-32-characters-long
+    expiration-minutes: 120
+  payment:
+    razorpay:
+      enabled: false
+      key-id:
+      key-secret:
+      webhook-secret:
+      currency: INR
+  super-admin:
+    email:
+    password:

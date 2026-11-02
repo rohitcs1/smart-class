@@ -1,0 +1,18 @@
+# Java
+backend/target/
+*.class
+
+# Node
+frontend/node_modules/
+frontend/dist/
+npm-debug.log*
+
+# Local configuration
+backend/.env
+frontend/.env
+*.local
+
+# IDE
+.idea/
+.vscode/
+*.iml
