@@ -10,7 +10,7 @@
 
 const char* WIFI_SSID = "REPLACE_WITH_WIFI_SSID";
 const char* WIFI_PASSWORD = "REPLACE_WITH_WIFI_PASSWORD";
-const char* DEVICE_ID = "REPLACE_WITH_DEVICE_ID";
+const char* DEVICE_CODE = "REPLACE_WITH_DEVICE_ID";
 const char* SETUP_TOKEN = "REPLACE_WITH_SETUP_TOKEN";
 const char* API_BASE_URL = "http://localhost:8080/api";
 
@@ -41,7 +41,7 @@ void loop() {
   HTTPClient http;
   http.begin(String(API_BASE_URL) + "/device-events");
   http.addHeader("Content-Type", "application/json");
-  String body = "{\"deviceId\":\"" + String(DEVICE_ID) + "\",\"setupToken\":\"" + String(SETUP_TOKEN) + "\",\"rfidUid\":\"" + uid + "\"}";
+  String body = "{\"deviceCode\":\"" + String(DEVICE_CODE) + "\",\"setupToken\":\"" + String(SETUP_TOKEN) + "\",\"rfidUid\":\"" + uid + "\"}";
   int response = http.POST(body);
   digitalWrite(STATUS_LED_PIN, response >= 200 && response < 300);
   http.end();

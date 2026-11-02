@@ -33,7 +33,7 @@ public class SecurityConfig {
         http.csrf(csrf -> csrf.disable()).cors(cors -> cors.configurationSource(corsSource()))
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(a -> a.requestMatchers("/api/health", "/api/auth/login", "/api/auth/register", "/api/subscriptions/plans",
-                                "/api/subscriptions/quote", "/error").permitAll()
+                                "/api/subscriptions/quote", "/api/device-events", "/api/device/**", "/error").permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll().anyRequest().authenticated())
                 .exceptionHandling(e -> e.authenticationEntryPoint(new HttpStatusEntryPoint(org.springframework.http.HttpStatus.UNAUTHORIZED)))
                 .addFilterBefore(new JwtFilter(jwtService), UsernamePasswordAuthenticationFilter.class);
