@@ -14,6 +14,11 @@ public class AuthController {
     @PostMapping("/register")
     @ResponseStatus(HttpStatus.CREATED)
     public AuthService.AuthResponse register(@Valid @RequestBody AuthService.RegisterRequest request) { return service.register(request); }
+    @PostMapping("/register/college")
+    @ResponseStatus(HttpStatus.CREATED)
+    public AuthService.AuthResponse registerCollege(@Valid @RequestBody AuthService.CollegeRegistrationRequest request) {
+        return service.registerCollege(request);
+    }
     @PostMapping("/login")
     public AuthService.AuthResponse login(@Valid @RequestBody AuthService.LoginRequest request) { return service.login(request); }
 

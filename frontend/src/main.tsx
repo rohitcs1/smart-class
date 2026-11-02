@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import axios from "axios";
 import "./styles.css";
 
-type User = { token: string; email: string; role: string };
+type User = { token: string; email: string; role: string; tenantId?: string };
 type Plan = { id: string; name: string; billingPeriod: "MONTHLY" | "YEARLY"; priceInr: number };
 type Institution = { id: string; name: string; code: string; address?: string; active: boolean };
 type Tenant = { id: string; name: string; slug: string; active: boolean };
@@ -20,18 +20,26 @@ api.interceptors.request.use((config) => {
 });
 
 function errorText(error: unknown) {
-  return axios.isAxiosError(error) ? error.response?.data?.message ?? "Request failed" : "Something went wrong";
+  if (axios.isAxiosError(error)) {
+    const data = error.response?.data;
+    if (typeof data?.message === "string") return data.message;
+    if (typeof data?.error?.description === "string") return data.error.description;
+    return `Request failed (${error.response?.status ?? "network error"})`;
+  }
+  return error instanceof Error ? error.message : "Something went wrong";
 }
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const superAdminRoute = window.location.pathname === "/super-admin/login";
   useEffect(() => {
     if (!localStorage.getItem("elneb_token")) return setLoading(false);
     api.get<User>("/auth/me").then(({ data }) => setUser(data)).catch(() => localStorage.removeItem("elneb_token")).finally(() => setLoading(false));
   }, []);
   if (loading) return <main className="center">Loading ELNEB...</main>;
-  if (!user) return <Auth onSuccess={setUser} />;
+  if (!user) return superAdminRoute ? <SuperAdminAuth onSuccess={setUser} /> : <Auth onSuccess={setUser} />;
+  if (superAdminRoute && user.role !== "SUPER_ADMIN") return <SuperAdminAuth onSuccess={setUser} />;
   return <Dashboard user={user} onLogout={() => { localStorage.removeItem("elneb_token"); setUser(null); }} />;
 }
 
@@ -39,11 +47,18 @@ function Auth({ onSuccess }: { onSuccess: (user: User) => void }) {
   const [registering, setRegistering] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [collegeName, setCollegeName] = useState("");
+  const [collegeCode, setCollegeCode] = useState("");
+  const [adminName, setAdminName] = useState("");
+  const [contactNumber, setContactNumber] = useState("");
+  const [address, setAddress] = useState("");
   const [message, setMessage] = useState("");
   async function submit(event: React.FormEvent) {
     event.preventDefault(); setMessage("");
     try {
-      const { data } = await api.post<User>(registering ? "/auth/register" : "/auth/login", { email, password });
+      const { data } = await api.post<User>(registering ? "/auth/register/college" : "/auth/login",
+        registering ? { collegeName, collegeCode, adminName, email, password, contactNumber, address } : { email, password });
+      if (data.role === "SUPER_ADMIN") throw new Error("Use the Super Admin login route.");
       localStorage.setItem("elneb_token", data.token); onSuccess(data);
     } catch (error) { setMessage(errorText(error)); }
   }
@@ -51,6 +66,13 @@ function Auth({ onSuccess }: { onSuccess: (user: User) => void }) {
     <div className="brand-mark">E</div><p className="eyebrow">ELNEB SMART CLASSROOM</p>
     <h1>{registering ? "Create your workspace" : "Welcome back"}</h1>
     <p className="muted">{registering ? "Start your institution's 15-day free trial." : "Sign in to manage your smart campus."}</p>
+    {registering && <div className="registration-grid">
+      <label>College name<input required value={collegeName} onChange={e => setCollegeName(e.target.value)} placeholder="Rungta College" /></label>
+      <label>College code<input required value={collegeCode} onChange={e => setCollegeCode(e.target.value.toUpperCase())} placeholder="RCET" /></label>
+      <label>Admin name<input required value={adminName} onChange={e => setAdminName(e.target.value)} placeholder="College administrator" /></label>
+      <label>Contact number<input required value={contactNumber} onChange={e => setContactNumber(e.target.value)} /></label>
+      <label className="full-field">College address<textarea required value={address} onChange={e => setAddress(e.target.value)} rows={2} /></label>
+    </div>}
     <label>Email<input type="email" required value={email} onChange={e => setEmail(e.target.value)} /></label>
     <label>Password<input type="password" minLength={8} required value={password} onChange={e => setPassword(e.target.value)} /></label>
     {message && <p className="error">{message}</p>}<button type="submit">{registering ? "Create account" : "Sign in"}</button>
@@ -58,28 +80,97 @@ function Auth({ onSuccess }: { onSuccess: (user: User) => void }) {
   </form></main>;
 }
 
+function SuperAdminAuth({ onSuccess }: { onSuccess: (user: User) => void }) {
+  const [email, setEmail] = useState(""); const [password, setPassword] = useState(""); const [message, setMessage] = useState("");
+  async function submit(event: React.FormEvent) {
+    event.preventDefault(); setMessage("");
+    try {
+      const { data } = await api.post<User>("/auth/login", { email, password });
+      if (data.role !== "SUPER_ADMIN") throw new Error("This account is not a Super Admin account.");
+      localStorage.setItem("elneb_token", data.token); onSuccess(data);
+    } catch (error) { setMessage(error instanceof Error ? error.message : errorText(error)); }
+  }
+  return <main className="auth super-auth"><div className="auth-glow" /><form className="auth-card super-auth-card" onSubmit={submit}>
+    <div className="brand-mark super-brand">E</div><p className="eyebrow">ELNEB PLATFORM CONTROL</p><h1>Super Admin access</h1>
+    <p className="muted">Manage every institution, subscription, device and offer from one secure command center.</p>
+    <label>Platform email<input type="email" required value={email} onChange={e => setEmail(e.target.value)} /></label>
+    <label>Password<input type="password" required value={password} onChange={e => setPassword(e.target.value)} /></label>
+    {message && <p className="error">{message}</p>}<button type="submit">Enter command center <span>→</span></button>
+    <a className="link-button" href="/">← College login</a>
+  </form></main>;
+}
+
 function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [section, setSection] = useState("Overview");
   const role = user.role.replace(/_/g, " ");
   const menu = user.role === "SUPER_ADMIN"
-    ? ["Overview", "Tenants", "Institutions", "Subscriptions"]
-    : ["Overview", "Institutions", "Classrooms", "Teachers", "Timetable", "RFID & Attendance", "Devices", "Live Monitoring", "Reports", "Subscription"];
+    ? ["Overview", "Colleges", "Subscriptions", "Devices", "Coupons", "Settings"]
+    : ["Overview", "Institutions", "Users", "Classrooms", "Teachers", "Timetable", "RFID & Attendance", "Devices", "Live Monitoring", "Reports", "Subscription"];
   return <main className="app-shell">
     <aside><div className="logo"><span className="logo-icon">E</span> ELNEB</div><p className="sidebar-label">WORKSPACE</p>
       {menu.map(item => <button key={item} className={section === item ? "nav-item active" : "nav-item"} onClick={() => setSection(item)}><span>{icon(item)}</span>{item}</button>)}
       <div className="sidebar-bottom"><span className="avatar">{user.email[0].toUpperCase()}</span><div><b>{user.email.split("@")[0]}</b><small>{role}</small></div><button className="logout" onClick={onLogout}>↪</button></div>
     </aside>
     <section className="main-panel"><header className="topbar"><div><p className="eyebrow">ELNEB CONTROL CENTER</p><h2>{section}</h2></div><span className="status-dot">● System operational</span></header>
-      <div className="content"><Section section={section} user={user} /></div>
+      <div className="content">{user.role === "SUPER_ADMIN" ? <SuperAdminPanel section={section} user={user} /> : <Section section={section} user={user} />}</div>
     </section>
   </main>;
+}
+
+type SuperCollege = { tenantId: string; name: string; slug: string; active: boolean; subscriptionStatus: string; subscriptionEndsAt?: string; deviceCount: number };
+type SuperDashboard = { totalColleges: number; activeSubscriptions: number; trialColleges: number; expiredColleges: number; totalClassrooms: number; totalDevices: number; onlineDevices: number; totalCoupons: number; colleges: SuperCollege[] };
+type SuperSubscription = { tenantId: string; collegeName: string; plan: string; status: string; trial: boolean; startsAt: string; endsAt: string };
+
+function SuperAdminPanel({ section, user }: { section: string; user: User }) {
+  const [dashboard, setDashboard] = useState<SuperDashboard | null>(null); const [subscriptions, setSubscriptions] = useState<SuperSubscription[]>([]); const [query, setQuery] = useState(""); const [loading, setLoading] = useState(true); const [message, setMessage] = useState("");
+  async function load() { try { const { data } = await api.get<SuperDashboard>("/super-admin/dashboard"); setDashboard(data); setMessage(""); } catch (e) { setMessage(errorText(e)); } finally { setLoading(false); } }
+  useEffect(() => { load(); }, []);
+  async function loadSubscriptions() { try { const { data } = await api.get<SuperSubscription[]>("/super-admin/subscriptions"); setSubscriptions(data); } catch (e) { setMessage(errorText(e)); } }
+  if (loading) return <div className="dashboard-loading"><span className="loading-orb">E</span><b>Preparing command center</b><small>Syncing platform intelligence...</small></div>;
+  if (!dashboard) return <article className="panel"><p className="error">{message || "Unable to load platform dashboard."}</p><button onClick={load}>Try again</button></article>;
+  if (section === "Colleges") return <SuperColleges data={dashboard.colleges} query={query} setQuery={setQuery} onRefresh={load} />;
+  if (section === "Subscriptions") return <SuperSubscriptions rows={subscriptions} onLoad={loadSubscriptions} />;
+  if (section === "Devices") return <SuperDevices data={dashboard} />;
+  if (section === "Coupons") return <CouponManager />;
+  if (section === "Settings") return <SuperSettings user={user} />;
+  return <SuperOverview data={dashboard} />;
+}
+
+function SuperOverview({ data }: { data: SuperDashboard }) {
+  const cards = [["Registered colleges", data.totalColleges, "Platform workspaces", "◈"], ["Active subscriptions", data.activeSubscriptions, "Paying institutions", "✦"], ["Trial colleges", data.trialColleges, "Currently exploring ELNEB", "◷"], ["Expired accounts", data.expiredColleges, "Require attention", "⌁"]];
+  return <><div className="super-hero"><div><p className="eyebrow">PLATFORM PULSE · LIVE</p><h1>Good evening, platform owner.</h1><p className="muted">Your complete ELNEB ecosystem, beautifully organized.</p></div><div className="pulse-badge"><span /> All systems operational</div></div><div className="stats super-stats">{cards.map(([label, value, note, icon], index) => <article className={`stat super-stat stat-${index}`} key={String(label)}><div className="stat-icon">{icon}</div><span>{label}</span><strong>{value}</strong><small>{note}</small></article>)}</div><div className="super-grid"><article className="panel chart-panel"><div className="page-intro"><div><p className="eyebrow">ECOSYSTEM SNAPSHOT</p><h3>Infrastructure at a glance</h3></div><span className="live-label">● LIVE</span></div><div className="metric-bars"><div><span>Classrooms</span><b>{data.totalClassrooms}</b><i style={{ width: `${Math.min(100, data.totalClassrooms * 4 + 8)}%` }} /></div><div><span>Connected devices</span><b>{data.totalDevices}</b><i style={{ width: `${data.totalDevices ? Math.max(12, data.onlineDevices / data.totalDevices * 100) : 12}%` }} /></div><div><span>Online now</span><b>{data.onlineDevices}</b><i style={{ width: `${data.totalDevices ? Math.max(8, data.onlineDevices / data.totalDevices * 100) : 8}%` }} /></div></div></article><article className="panel command-panel"><p className="eyebrow">QUICK ACTIONS</p><h3>Keep your platform moving</h3><div className="quick-actions"><div><span>✦</span><b>Review colleges</b><small>Monitor institution health</small></div><div><span>♢</span><b>Launch an offer</b><small>Create a discount coupon</small></div><div><span>⌁</span><b>Check devices</b><small>See connectivity status</small></div></div></article></div></>;
+}
+
+function SuperColleges({ data, query, setQuery, onRefresh }: { data: SuperCollege[]; query: string; setQuery: (value: string) => void; onRefresh: () => void }) {
+  const rows = data.filter(row => `${row.name} ${row.slug}`.toLowerCase().includes(query.toLowerCase()));
+  return <article className="panel"><div className="page-intro"><div><p className="eyebrow">TENANT DIRECTORY</p><h3>Registered colleges</h3><p className="muted">Every institution using the ELNEB platform.</p></div><button className="small-button" onClick={onRefresh}>Refresh</button></div><div className="toolbar"><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search colleges..." /><span className="result-count">{rows.length} colleges</span></div><div className="super-table"><table><thead><tr><th>College</th><th>Status</th><th>Subscription expiry</th><th>Devices</th><th>Workspace</th></tr></thead><tbody>{rows.map(row => <tr key={row.tenantId}><td><span className="table-avatar">{row.name[0]}</span><div><b>{row.name}</b><small>{row.slug}</small></div></td><td><span className={`status-pill ${row.subscriptionStatus.toLowerCase()}`}>{row.subscriptionStatus}</span></td><td>{row.subscriptionEndsAt ? new Date(row.subscriptionEndsAt).toLocaleDateString() : "—"}</td><td><strong>{row.deviceCount}</strong></td><td><span className={row.active ? "online-dot" : "offline-dot"} /> {row.active ? "Active" : "Inactive"}</td></tr>)}</tbody></table>{!rows.length && <div className="empty-state"><b>No colleges found</b><p>Try another search term.</p></div>}</div></article>;
+}
+
+function SuperSubscriptions({ rows, onLoad }: { rows: SuperSubscription[]; onLoad: () => void }) {
+  return <article className="panel"><div className="page-intro"><div><p className="eyebrow">REVENUE OPERATIONS</p><h3>Subscription lifecycle</h3><p className="muted">Track trials, renewals and expiry across colleges.</p></div><button className="small-button" onClick={onLoad}>Load subscriptions</button></div>{rows.length ? <div className="super-table"><table><thead><tr><th>College</th><th>Plan</th><th>Status</th><th>Started</th><th>Expires</th></tr></thead><tbody>{rows.map(row => <tr key={`${row.tenantId}-${row.endsAt}`}><td><b>{row.collegeName}</b></td><td>{row.plan}</td><td><span className={`status-pill ${row.status.toLowerCase()}`}>{row.trial ? "TRIAL" : row.status}</span></td><td>{new Date(row.startsAt).toLocaleDateString()}</td><td>{new Date(row.endsAt).toLocaleDateString()}</td></tr>)}</tbody></table></div> : <div className="empty-state"><span className="empty-icon">◷</span><b>Load subscription intelligence</b><p>See every college plan and expiry date here.</p></div>}</article>;
+}
+
+function SuperDevices({ data }: { data: SuperDashboard }) {
+  const percent = data.totalDevices ? Math.round(data.onlineDevices / data.totalDevices * 100) : 0;
+  return <div className="super-grid"><article className="panel device-health"><p className="eyebrow">DEVICE NETWORK</p><h3>Connectivity health</h3><div className="health-ring" style={{ "--progress": `${percent * 3.6}deg` } as React.CSSProperties}><strong>{percent}%</strong><small>online</small></div><div className="health-legend"><span><i className="online-dot" /> Online <b>{data.onlineDevices}</b></span><span><i className="offline-dot" /> Offline <b>{data.totalDevices - data.onlineDevices}</b></span></div></article><article className="panel"><p className="eyebrow">GLOBAL INVENTORY</p><h3>Platform infrastructure</h3><div className="inventory-row"><span>All devices</span><strong>{data.totalDevices}</strong></div><div className="inventory-row"><span>Active classrooms</span><strong>{data.totalClassrooms}</strong></div><div className="inventory-row"><span>Average devices / college</span><strong>{data.totalColleges ? (data.totalDevices / data.totalColleges).toFixed(1) : "0"}</strong></div></article></div>;
+}
+
+function CouponManager() {
+  const [code, setCode] = useState(""); const [discount, setDiscount] = useState("10"); const [appliesTo, setAppliesTo] = useState("BOTH"); const [message, setMessage] = useState("");
+  async function create(event: React.FormEvent) { event.preventDefault(); try { await api.post("/subscriptions/discount-tokens", { code, discountPercent: Number(discount), appliesTo, expiresAt: null }); setMessage("Coupon created successfully."); setCode(""); } catch (e) { setMessage(errorText(e)); } }
+  return <div className="two-col"><article className="panel form-panel coupon-hero"><div className="coupon-symbol">%</div><p className="eyebrow">GROWTH TOOLKIT</p><h3>Create a platform offer</h3><p className="muted">Reward a college with a beautiful, trackable discount code.</p><form onSubmit={create}><label>Coupon code<input required value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="WELCOME25" /></label><label>Discount percentage<input required type="number" min="1" max="100" value={discount} onChange={e => setDiscount(e.target.value)} /></label><label>Applies to<select value={appliesTo} onChange={e => setAppliesTo(e.target.value)}><option value="BOTH">Monthly & yearly</option><option value="MONTHLY">Monthly only</option><option value="YEARLY">Yearly only</option></select></label><button type="submit">Generate coupon <span>✦</span></button></form>{message && <p className={message.includes("successfully") ? "success" : "error"}>{message}</p>}</article><article className="panel offer-preview"><p className="eyebrow">LIVE PREVIEW</p><div className="offer-card"><span>ELNEB OFFER</span><strong>{discount}% OFF</strong><b>{code || "YOURCODE"}</b><small>For {appliesTo === "BOTH" ? "all plans" : `${appliesTo.toLowerCase()} plans`}</small></div><p className="muted">This code can be shared with a college during checkout.</p></article></div>;
+}
+
+function SuperSettings({ user }: { user: User }) {
+  return <article className="panel settings-card"><div className="settings-orb">E</div><p className="eyebrow">PLATFORM SETTINGS</p><h3>Super Admin profile</h3><p className="muted">You are signed in as the ELNEB platform owner.</p><div className="setting-row"><span>Email</span><b>{user.email}</b></div><div className="setting-row"><span>Access level</span><span className="status-pill active">GLOBAL ADMIN</span></div><div className="setting-row"><span>Security</span><b>JWT protected</b></div></article>;
 }
 
 function Section({ section, user }: { section: string; user: User }) {
   if (section === "Subscriptions" || section === "Subscription") return <Subscription user={user} />;
   if (section === "Tenants") return <TenantManager />;
   if (section === "Institutions") return <InstitutionManager user={user} />;
-  if (section === "Classrooms") return <ClassroomManager />;
+  if (section === "Users") return <UserManager user={user} />;
+  if (section === "Classrooms") return <ClassroomManager user={user} />;
   if (section === "Teachers") return <TeacherManager />;
   if (section === "Timetable") return <TimetableManager />;
   if (section === "RFID & Attendance") return <AttendanceCenter />;
@@ -101,9 +192,44 @@ function TenantManager() {
 }
 
 function InstitutionManager({ user }: { user: User }) {
-  const [tenantId, setTenantId] = useState(""); const [name, setName] = useState(""); const [code, setCode] = useState(""); const [address, setAddress] = useState(""); const [items, setItems] = useState<Institution[]>([]); const [message, setMessage] = useState("");
+  const [tenantId, setTenantId] = useState(user.tenantId ?? ""); const [name, setName] = useState(""); const [code, setCode] = useState(""); const [address, setAddress] = useState(""); const [items, setItems] = useState<Institution[]>([]); const [message, setMessage] = useState("");
+  useEffect(() => { if (user.tenantId) setTenantId(user.tenantId); }, [user.tenantId]);
   async function create(event: React.FormEvent) { event.preventDefault(); try { const { data } = await api.post<Institution>(`/institutions/tenant/${tenantId}`, { name, code, address }); setItems([...items, data]); setMessage("Institution created."); } catch (e) { setMessage(errorText(e)); } }
-  return <div className="two-col"><article className="panel form-panel"><h3>Add institution</h3><p className="muted">Connect an institution to a tenant workspace.</p><form onSubmit={create}><label>Tenant ID<input required value={tenantId} onChange={e => setTenantId(e.target.value)} placeholder="UUID from tenant setup" /></label><label>Institution name<input required value={name} onChange={e => setName(e.target.value)} /></label><label>Code<input required value={code} onChange={e => setCode(e.target.value)} /></label><label>Address<input value={address} onChange={e => setAddress(e.target.value)} /></label><button>Create institution</button>{message && <p className="success">{message}</p>}</form></article><article className="panel"><h3>Institutions</h3>{items.length ? items.map(item => <div className="list-row" key={item.id}><span className="avatar">{item.name[0]}</span><div><b>{item.name}</b><small>{item.code} · {item.active ? "Active" : "Inactive"}</small></div></div>) : <div className="empty-state"><span className="empty-icon">▦</span><b>No institutions loaded</b><p>Use the form to create your first institution.</p></div>}</article></div>;
+  return <div className="two-col"><article className="panel form-panel"><h3>Add institution</h3><p className="muted">Your college registration already created the institution. Additional records can be added here.</p><form onSubmit={create}>{user.role === "SUPER_ADMIN" && <label>Tenant ID<input required value={tenantId} onChange={e => setTenantId(e.target.value)} placeholder="Tenant UUID" /></label>}<label>Institution name<input required value={name} onChange={e => setName(e.target.value)} /></label><label>Code<input required value={code} onChange={e => setCode(e.target.value)} /></label><label>Address<input value={address} onChange={e => setAddress(e.target.value)} /></label><button>Create institution</button>{message && <p className={message.includes("created") ? "success" : "error"}>{message}</p>}</form></article><article className="panel"><h3>Institutions</h3>{items.length ? items.map(item => <div className="list-row" key={item.id}><span className="avatar">{item.name[0]}</span><div><b>{item.name}</b><small>{item.code} · {item.active ? "Active" : "Inactive"}</small></div></div>) : <div className="empty-state"><span className="empty-icon">▦</span><b>No institutions loaded</b><p>Use the form to create your first institution.</p></div>}</article></div>;
+}
+
+type ManagedUser = { id: string; email: string; displayName?: string; contactNumber?: string; role: string; active: boolean };
+function UserManager({ user }: { user: User }) {
+  const [items, setItems] = useState<ManagedUser[]>([]);
+  const [displayName, setDisplayName] = useState(""); const [email, setEmail] = useState("");
+  const [password, setPassword] = useState(""); const [role, setRole] = useState("HOD");
+  const [contactNumber, setContactNumber] = useState(""); const [message, setMessage] = useState("");
+  async function load() {
+    if (!user.tenantId) return;
+    try { const { data } = await api.get<ManagedUser[]>(`/users/tenant/${user.tenantId}`); setItems(data); setMessage(""); }
+    catch (e) { setMessage(errorText(e)); }
+  }
+  useEffect(() => { load(); }, [user.tenantId]);
+  async function create(event: React.FormEvent) {
+    event.preventDefault();
+    if (!user.tenantId) return setMessage("Your account is not linked to an institution.");
+    try {
+      const { data } = await api.post<ManagedUser>(`/users/tenant/${user.tenantId}`,
+        { displayName, email, password, role, contactNumber });
+      setItems([data, ...items]); setDisplayName(""); setEmail(""); setPassword(""); setContactNumber("");
+      setMessage("Staff account created successfully.");
+    } catch (e) { setMessage(errorText(e)); }
+  }
+  return <div className="two-col"><article className="panel form-panel"><h3>Invite college staff</h3><p className="muted">Create secure HOD, reception and device-admin accounts for this college.</p>
+    <form onSubmit={create}><label>Full name<input required value={displayName} onChange={e => setDisplayName(e.target.value)} /></label>
+      <label>Email<input required type="email" value={email} onChange={e => setEmail(e.target.value)} /></label>
+      <label>Temporary password<input required minLength={8} type="password" value={password} onChange={e => setPassword(e.target.value)} /></label>
+      <label>Role<select value={role} onChange={e => setRole(e.target.value)}><option value="HOD">HOD</option><option value="RECEPTION">Reception viewer</option><option value="DEVICE_ADMIN">Device admin</option><option value="TEACHER">Teacher</option></select></label>
+      <label>Contact number<input value={contactNumber} onChange={e => setContactNumber(e.target.value)} /></label>
+      <button type="submit">Create staff account</button></form>{message && <p className={message.includes("successfully") ? "success" : "error"}>{message}</p>}
+    </article><article className="panel"><div className="panel-heading"><div><h3>College users</h3><p className="muted">Only users belonging to your institution are shown.</p></div><button className="small-button" onClick={load}>Refresh</button></div>
+      {items.length ? items.map(item => <div className="list-row" key={item.id}><span className="avatar">{(item.displayName ?? item.email)[0].toUpperCase()}</span><div><b>{item.displayName || item.email}</b><small>{item.email} · {item.role.replace(/_/g, " ")} · {item.active ? "Active" : "Inactive"}</small></div><button className="small-button" onClick={async () => { try { const { data } = await api.patch<ManagedUser>(`/users/${item.id}/active`, null, { params: { active: !item.active } }); setItems(items.map(row => row.id === item.id ? data : row)); } catch (e) { setMessage(errorText(e)); } }}>{item.active ? "Deactivate" : "Activate"}</button></div>) : <div className="empty-state"><b>No staff accounts yet</b><p>Create the first HOD or reception viewer above.</p></div>}
+    </article></div>;
 }
 
 type Campus = { id: string; name: string; address?: string; active: boolean };
@@ -111,14 +237,22 @@ type NamedItem = { id: string; name: string; active: boolean };
 type Classroom = { id: string; name: string; capacity: number; roomType: string; active: boolean };
 type Teacher = { id: string; employeeCode: string; fullName: string; email?: string; department?: string; active: boolean };
 
-function ClassroomManager() {
+function ClassroomManager({ user }: { user: User }) {
   const [institutionId, setInstitutionId] = useState(""); const [campusId, setCampusId] = useState("");
   const [buildingId, setBuildingId] = useState(""); const [floorId, setFloorId] = useState("");
   const [name, setName] = useState(""); const [address, setAddress] = useState("");
   const [capacity, setCapacity] = useState("40"); const [roomType, setRoomType] = useState("LECTURE");
   const [campuses, setCampuses] = useState<Campus[]>([]); const [buildings, setBuildings] = useState<NamedItem[]>([]);
   const [floors, setFloors] = useState<NamedItem[]>([]); const [classrooms, setClassrooms] = useState<Classroom[]>([]);
+  const [institutions, setInstitutions] = useState<Institution[]>([]);
   const [message, setMessage] = useState("");
+  useEffect(() => {
+    if (!user.tenantId) return;
+    api.get<Institution[]>(`/institutions/tenant/${user.tenantId}`).then(({ data }) => {
+      setInstitutions(data);
+      if (data[0]) { setInstitutionId(data[0].id); setMessage("Institution selected automatically."); }
+    }).catch(e => setMessage(errorText(e)));
+  }, [user.tenantId]);
   async function loadCampuses() { try { const { data } = await api.get<Campus[]>(`/campus/institution/${institutionId}`); setCampuses(data); setMessage(""); } catch (e) { setMessage(errorText(e)); } }
   async function loadBuildings() { try { const { data } = await api.get<NamedItem[]>(`/campus/${campusId}/buildings`); setBuildings(data); } catch (e) { setMessage(errorText(e)); } }
   async function loadFloors() { try { const { data } = await api.get<NamedItem[]>(`/campus/buildings/${buildingId}/floors`); setFloors(data); } catch (e) { setMessage(errorText(e)); } }
@@ -134,7 +268,7 @@ function ClassroomManager() {
     } catch (e) { setMessage(errorText(e)); }
   }
   return <div className="two-col"><article className="panel form-panel"><h3>Build campus structure</h3><p className="muted">Create campus, building, floor and classroom records through the live API.</p>
-    <label>Institution ID<input required value={institutionId} onChange={e => setInstitutionId(e.target.value)} placeholder="Institution UUID" /></label><button className="small-button" type="button" onClick={loadCampuses} disabled={!institutionId}>Load campuses</button>
+    <label>Institution<select required value={institutionId} onChange={e => setInstitutionId(e.target.value)}><option value="">Select institution</option>{institutions.map(item => <option key={item.id} value={item.id}>{item.name} ({item.code})</option>)}</select></label><button className="small-button" type="button" onClick={loadCampuses} disabled={!institutionId}>Load campuses</button>
     <label>Campus<select value={campusId} onChange={e => { setCampusId(e.target.value); setBuildingId(""); setFloorId(""); }}>{campuses.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
     {campusId && <button className="small-button" type="button" onClick={loadBuildings}>Load buildings</button>}
     <label>Building<select value={buildingId} onChange={e => { setBuildingId(e.target.value); setFloorId(""); }}>{buildings.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
@@ -289,6 +423,6 @@ function loadRazorpay() {
 }
 
 function Placeholder({ title, items }: { title: string; items: string[] }) { return <article className="panel feature-panel"><h1>{title}</h1><p className="muted">This workspace is ready for the connected backend module.</p><div className="feature-grid">{items.map(item => <div className="feature-tile" key={item}><span className="tile-icon">✦</span><b>{item}</b><small>Configure and manage from this workspace</small></div>)}</div></article>; }
-function icon(item: string) { return ({ Overview: "⌂", Tenants: "◈", Institutions: "▦", Subscriptions: "◇", Subscription: "◇", Classrooms: "▤", Teachers: "♙", Timetable: "◫", "RFID & Attendance": "◉", Devices: "⌁", "Live Monitoring": "◉", Reports: "▥" } as Record<string, string>)[item] ?? "•"; }
+function icon(item: string) { return ({ Overview: "⌂", Tenants: "◈", Colleges: "◈", Institutions: "▦", Users: "♙", Subscriptions: "◇", Subscription: "◇", Coupons: "✦", Settings: "⚙", Classrooms: "▤", Teachers: "♙", Timetable: "◫", "RFID & Attendance": "◉", Devices: "⌁", "Live Monitoring": "◉", Reports: "▥" } as Record<string, string>)[item] ?? "•"; }
 
 createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);

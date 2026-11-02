@@ -14,6 +14,9 @@ import jakarta.validation.constraints.NotNull;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -27,6 +30,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 @RestController
 @RequestMapping("/api/payments/razorpay")
 public class PaymentController {
+    private static final Logger log = LoggerFactory.getLogger(PaymentController.class);
     private final RazorpayProperties properties;
     private final SubscriptionPlanRepository plans;
     private final RestClient client;
@@ -62,11 +66,18 @@ public class PaymentController {
         }
         if (amount.compareTo(BigDecimal.ONE) < 0) amount = BigDecimal.ONE;
         long amountPaise = amount.movePointRight(2).longValueExact();
-        Map<?, ?> response = client.post().uri("/v1/orders")
-                .headers(headers -> headers.setBasicAuth(properties.keyId(), properties.keySecret()))
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(Map.of("amount", amountPaise, "currency", properties.currency(), "receipt", "ELNEB-" + UUID.randomUUID()))
-                .retrieve().body(Map.class);
+        String receipt = "ELN-" + UUID.randomUUID().toString().replace("-", "").substring(0, 24);
+        Map<?, ?> response;
+        try {
+            response = client.post().uri("/v1/orders")
+                    .headers(headers -> headers.setBasicAuth(properties.keyId(), properties.keySecret()))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("amount", amountPaise, "currency", properties.currency(), "receipt", receipt))
+                    .retrieve().body(Map.class);
+        } catch (RestClientResponseException ex) {
+            log.warn("Razorpay order creation failed with status {}: {}", ex.getStatusCode(), ex.getResponseBodyAsString());
+            throw new IllegalArgumentException("Razorpay order creation failed. Check Razorpay credentials and payment configuration.");
+        }
         if (response == null || response.get("id") == null) throw new IllegalStateException("Razorpay returned an invalid order response");
         String orderId=response.get("id").toString();
         User user=currentUser();

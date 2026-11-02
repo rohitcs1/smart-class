@@ -23,6 +23,10 @@ public class User {
     private Role role;
     @Column(nullable = false)
     private boolean active = true;
+    @Column(name = "display_name", length = 150)
+    private String displayName;
+    @Column(name = "contact_number", length = 30)
+    private String contactNumber;
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "tenant_id")
     private Tenant tenant;
@@ -35,6 +39,10 @@ public class User {
         this.passwordHash = passwordHash;
         this.role = role;
     }
+    public void updateProfile(String displayName, String contactNumber) {
+        this.displayName = displayName == null ? null : displayName.trim();
+        this.contactNumber = contactNumber == null ? null : contactNumber.trim();
+    }
     public void assignTenant(Tenant tenant) { this.tenant = tenant; }
     public Tenant getTenant() { return tenant; }
     public UUID getId() { return id; }
@@ -42,5 +50,8 @@ public class User {
     public String getPasswordHash() { return passwordHash; }
     public Role getRole() { return role; }
     public boolean isActive() { return active; }
+    public String getDisplayName() { return displayName; }
+    public String getContactNumber() { return contactNumber; }
     public void changeRole(Role role) { this.role = role; }
+    public void setActive(boolean active) { this.active = active; }
 }
