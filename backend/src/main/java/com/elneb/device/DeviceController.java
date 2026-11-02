@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.*;
+import com.elneb.monitoring.MonitoringWebSocketHandler;
 
 @RestController
 public class DeviceController {
@@ -25,12 +26,14 @@ public class DeviceController {
     private final TeacherRepository teachers;
     private final MergedSessionRepository sessions;
     private final AttendanceRecordRepository records;
+    private final MonitoringWebSocketHandler monitoring;
 
     public DeviceController(IotDeviceRepository devices, ClassroomRepository classrooms, PasswordEncoder passwords,
                             RfidCardRepository cards, TeacherRepository teachers, MergedSessionRepository sessions,
-                            AttendanceRecordRepository records) {
+                            AttendanceRecordRepository records, MonitoringWebSocketHandler monitoring) {
         this.devices = devices; this.classrooms = classrooms; this.passwords = passwords; this.cards = cards;
         this.teachers = teachers; this.sessions = sessions; this.records = records;
+        this.monitoring = monitoring;
     }
 
     @GetMapping("/api/devices/classroom/{classroomId}")
@@ -69,13 +72,16 @@ public class DeviceController {
     public DeviceResponse heartbeat(@Valid @RequestBody DeviceRequest request) {
         IotDevice device = authenticate(request.deviceCode(), request.setupToken());
         device.markSeen();
-        return DeviceResponse.from(devices.save(device));
+        IotDevice saved = devices.save(device);
+        monitoring.broadcast("DEVICE_HEARTBEAT", "{\"deviceCode\":"+monitoring.json(saved.getDeviceCode())+",\"status\":"+monitoring.json(saved.getStatus().name())+"}");
+        return DeviceResponse.from(saved);
     }
 
     @PostMapping("/api/device-events")
     public EventResponse event(@Valid @RequestBody DeviceEventRequest request) {
         IotDevice device = authenticate(request.deviceCode(), request.setupToken());
         device.markSeen(); devices.save(device);
+        monitoring.broadcast("DEVICE_HEARTBEAT", "{\"deviceCode\":"+monitoring.json(device.getDeviceCode())+",\"status\":\"ONLINE\"}");
         RfidCard card = cards.findByCardUidIgnoreCase(request.rfidUid()).filter(RfidCard::isActive)
                 .orElseThrow(() -> new IllegalArgumentException("RFID card is not assigned"));
         UUID teacherId = card.getTeacher().getId();
@@ -86,6 +92,7 @@ public class DeviceController {
         AttendanceRecord record = records.findBySessionIdAndTeacherId(activeSession.getId(), teacherId).orElse(null);
         if (record == null) record = records.save(new AttendanceRecord(activeSession, card.getTeacher(), card.getCardUid()));
         else record.checkOut();
+        monitoring.broadcast("TEACHER_ATTENDANCE", "{\"deviceCode\":"+monitoring.json(device.getDeviceCode())+",\"teacherId\":"+monitoring.json(teacherId.toString())+",\"status\":"+monitoring.json(record.getStatus())+"}");
         return new EventResponse(device.getDeviceCode(), record.getStatus(), record.getId(), Instant.now());
     }
 

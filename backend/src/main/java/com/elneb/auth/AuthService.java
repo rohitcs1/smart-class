@@ -7,23 +7,34 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.util.UUID;
+import com.elneb.tenant.Tenant;
+import com.elneb.tenant.TenantRepository;
+import com.elneb.subscription.SubscriptionLifecycleService;
 
 @Service
 public class AuthService {
     private final UserRepository users;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+    private final TenantRepository tenants;
+    private final SubscriptionLifecycleService subscriptions;
 
-    public AuthService(UserRepository users, PasswordEncoder passwordEncoder, JwtService jwtService) {
-        this.users = users;
-        this.passwordEncoder = passwordEncoder;
-        this.jwtService = jwtService;
+    public AuthService(UserRepository users, PasswordEncoder passwordEncoder, JwtService jwtService,
+                       TenantRepository tenants, SubscriptionLifecycleService subscriptions) {
+        this.users = users; this.passwordEncoder = passwordEncoder; this.jwtService = jwtService;
+        this.tenants = tenants; this.subscriptions = subscriptions;
     }
 
     @Transactional
     public AuthResponse register(RegisterRequest request) {
         if (users.existsByEmailIgnoreCase(request.email())) throw new IllegalArgumentException("Email is already registered");
-        User user = users.save(new User(request.email(), passwordEncoder.encode(request.password()), Role.INSTITUTION_ADMIN));
+        String baseSlug = request.email().substring(0, request.email().indexOf('@')).replaceAll("[^a-zA-Z0-9-]", "-").toLowerCase();
+        String slug = baseSlug + "-" + UUID.randomUUID().toString().substring(0, 8);
+        Tenant tenant = tenants.save(new Tenant(request.email().substring(0, request.email().indexOf('@')) + " workspace", slug));
+        User user = new User(request.email(), passwordEncoder.encode(request.password()), Role.INSTITUTION_ADMIN);
+        user.assignTenant(tenant);
+        user = users.save(user);
+        subscriptions.createTrial(tenant);
         return new AuthResponse(jwtService.create(user), user.getEmail(), user.getRole().name());
     }
 

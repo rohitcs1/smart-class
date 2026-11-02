@@ -63,7 +63,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   const role = user.role.replace(/_/g, " ");
   const menu = user.role === "SUPER_ADMIN"
     ? ["Overview", "Tenants", "Institutions", "Subscriptions"]
-    : ["Overview", "Institutions", "Classrooms", "Teachers", "Timetable", "RFID & Attendance", "Devices", "Reports", "Subscription"];
+    : ["Overview", "Institutions", "Classrooms", "Teachers", "Timetable", "RFID & Attendance", "Devices", "Live Monitoring", "Reports", "Subscription"];
   return <main className="app-shell">
     <aside><div className="logo"><span className="logo-icon">E</span> ELNEB</div><p className="sidebar-label">WORKSPACE</p>
       {menu.map(item => <button key={item} className={section === item ? "nav-item active" : "nav-item"} onClick={() => setSection(item)}><span>{icon(item)}</span>{item}</button>)}
@@ -84,6 +84,7 @@ function Section({ section, user }: { section: string; user: User }) {
   if (section === "Timetable") return <TimetableManager />;
   if (section === "RFID & Attendance") return <AttendanceCenter />;
   if (section === "Devices") return <DeviceManager />;
+  if (section === "Live Monitoring") return <LiveMonitoring />;
   if (section === "Reports") return <Placeholder title="Reports and analytics" items={["Classroom utilization", "Teacher activity", "Device uptime", "Export CSV"]} />;
   return <Overview user={user} />;
 }
@@ -110,6 +111,20 @@ type AttendanceRecord = { id: string; sessionId: string; teacherId: string; card
 type TimetableEntry = { id: string; classroomId: string; teacherId: string; dayOfWeek: string; subject: string; startsAt: string; endsAt: string; active: boolean };
 type Device = { id: string; deviceCode: string; status: string; lastSeenAt?: string };
 type ProvisionedDevice = Device & { setupToken: string; classroomId: string };
+type LiveEvent = { type: string; data: { deviceCode?: string; status?: string; teacherId?: string } };
+
+function LiveMonitoring() {
+  const [events, setEvents] = useState<LiveEvent[]>([]); const [connected, setConnected] = useState(false); const [classroomId, setClassroomId] = useState(""); const [cameraUrl, setCameraUrl] = useState(""); const token = localStorage.getItem("elneb_token");
+  useEffect(() => {
+    if (!token) return;
+    const socket = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host.replace(":5173", ":8080")}/ws/monitoring?token=${encodeURIComponent(token)}`);
+    socket.onopen = () => setConnected(true); socket.onclose = () => setConnected(false);
+    socket.onmessage = event => { try { setEvents(current => [JSON.parse(event.data), ...current].slice(0, 30)); } catch { /* ignore malformed server event */ } };
+    return () => socket.close();
+  }, [token]);
+  function showCamera() { if (!classroomId) return; setCameraUrl(`${api.defaults.baseURL}/cameras/${classroomId}/stream?token=${encodeURIComponent(token ?? "")}`); }
+  return <div className="two-col"><article className="panel"><div className="page-intro"><div><h3>Live classroom monitoring</h3><p className="muted">Device heartbeats and teacher check-in events appear instantly.</p></div><span className={connected ? "success" : "error"}>{connected ? "● Connected" : "● Disconnected"}</span></div>{events.length ? events.map((event, index) => <div className="list-row" key={`${event.type}-${index}`}><div><b>{event.type.replace("_", " ")}</b><small>{event.data.deviceCode ?? "classroom"} · {event.data.status ?? "received"} · {new Date().toLocaleTimeString()}</small></div></div>) : <div className="empty-state"><b>Waiting for live events</b><p>Connect an ESP32 device to see heartbeats.</p></div>}</article><article className="panel form-panel"><h3>Authorized camera view</h3><p className="muted">Enter a classroom ID where camera access has been granted.</p><label>Classroom ID<input value={classroomId} onChange={e => setClassroomId(e.target.value)} placeholder="Classroom UUID" /></label><button onClick={showCamera}>Open camera</button>{cameraUrl && <img className="camera-preview" src={cameraUrl} alt="Authorized classroom stream" onError={() => setCameraUrl("")} />}</article></div>;
+}
 
 function DeviceManager() {
   const [classroomId, setClassroomId] = useState(""); const [deviceCode, setDeviceCode] = useState(""); const [wifiSsid, setWifiSsid] = useState(""); const [wifiPassword, setWifiPassword] = useState(""); const [apiBaseUrl, setApiBaseUrl] = useState("http://YOUR_COMPUTER_IP:8080/api"); const [devices, setDevices] = useState<Device[]>([]); const [provisioned, setProvisioned] = useState<ProvisionedDevice | null>(null); const [message, setMessage] = useState("");
@@ -139,14 +154,14 @@ function AttendanceCenter() {
 }
 
 function Subscription({ user }: { user: User }) {
-  const [plans, setPlans] = useState<Plan[]>([]); const [code, setCode] = useState(""); const [quote, setQuote] = useState<Quote | null>(null); const [selected, setSelected] = useState<Plan | null>(null); const [message, setMessage] = useState("");
+  const [plans, setPlans] = useState<Plan[]>([]); const [code, setCode] = useState(""); const [quote, setQuote] = useState<Quote | null>(null); const [selected, setSelected] = useState<Plan | null>(null); const [message, setMessage] = useState(""); const [subscriptionStatus, setSubscriptionStatus] = useState<{status:string;monitoringEnabled:boolean;historicalViewOnly:boolean;endsAt?:string;trial?:boolean} | null>(null);
   const [tokenCode, setTokenCode] = useState(""); const [discountPercent, setDiscountPercent] = useState("10"); const [appliesTo, setAppliesTo] = useState("BOTH"); const [expiresAt, setExpiresAt] = useState(""); const [createdToken, setCreatedToken] = useState<DiscountToken | null>(null);
-  useEffect(() => { api.get<Plan[]>("/subscriptions/plans").then(({ data }) => setPlans(data)).catch(e => setMessage(errorText(e))); }, []);
+  useEffect(() => { api.get<Plan[]>("/subscriptions/plans").then(({ data }) => setPlans(data)).catch(e => setMessage(errorText(e))); api.get("/subscriptions/status").then(({ data }) => setSubscriptionStatus(data)).catch(e => setMessage(errorText(e))); }, []);
   async function calculate(planId: string) { try { const plan = plans.find(item => item.id === planId) ?? null; setSelected(plan); const { data } = await api.post<Quote>("/subscriptions/quote", { planId, discountCode: code }); setQuote(data); setMessage(""); } catch (e) { setQuote(null); setMessage(errorText(e)); } }
   async function checkout() {
     if (!selected) return;
     try {
-      const { data } = await api.post<RazorpayOrder>("/payments/razorpay/orders", { planId: selected.id, customerName: user.email.split("@")[0], customerEmail: user.email });
+      const { data } = await api.post<RazorpayOrder>("/payments/razorpay/orders", { planId: selected.id, discountCode: code, customerName: user.email.split("@")[0], customerEmail: user.email });
       if (!window.Razorpay) {
         await loadRazorpay();
       }
@@ -162,7 +177,7 @@ function Subscription({ user }: { user: User }) {
             razorpayPaymentId: response.razorpay_payment_id,
             razorpaySignature: response.razorpay_signature,
           });
-          setMessage("Payment verified successfully. Subscription activation will be completed by the backend.");
+          const status = await api.get("/subscriptions/status"); setSubscriptionStatus(status.data); setMessage("Payment verified and subscription activated successfully.");
         },
       });
       checkout.open();
@@ -180,13 +195,18 @@ function Subscription({ user }: { user: User }) {
       setCreatedToken(data); setTokenCode(""); setMessage("Discount token created successfully.");
     } catch (e) { setCreatedToken(null); setMessage(errorText(e)); }
   }
-  return <><div className="page-intro"><div><h1>{user.role === "SUPER_ADMIN" ? "Subscription control" : "Choose your plan"}</h1><p className="muted">{user.role === "SUPER_ADMIN" ? "Manage plans and generate discount tokens for institutions." : "Start with a 15-day free trial. Upgrade whenever you are ready."}</p></div><span className="trial-badge">15 DAYS FREE</span></div>{user.role === "SUPER_ADMIN" && <article className="panel form-panel"><h3>Generate discount token</h3><p className="muted">Create a coupon that institution admins can apply at checkout.</p><form onSubmit={createToken}><label>Token code<input required value={tokenCode} onChange={e => setTokenCode(e.target.value)} placeholder="WELCOME25" /></label><label>Discount percentage<input required type="number" min="0" max="100" step="0.01" value={discountPercent} onChange={e => setDiscountPercent(e.target.value)} /></label><label>Applies to<select value={appliesTo} onChange={e => setAppliesTo(e.target.value)}><option value="BOTH">Monthly and yearly</option><option value="MONTHLY">Monthly only</option><option value="YEARLY">Yearly only</option></select></label><label>Expiry date (optional)<input type="date" value={expiresAt} onChange={e => setExpiresAt(e.target.value)} /></label><button type="submit">Generate token</button></form>{createdToken && <p className="success">Token: <strong>{createdToken.code}</strong> · {createdToken.discountPercent}% off · {createdToken.appliesTo}</p>}</article>}{user.role !== "SUPER_ADMIN" && <><div className="plans">{plans.map(plan => <article className="plan-card" key={plan.id}><span className="plan-period">{plan.billingPeriod === "YEARLY" ? "BEST VALUE" : "FLEXIBLE"}</span><h3>{plan.name}</h3><strong>₹{plan.priceInr.toLocaleString("en-IN")}<small> / {plan.billingPeriod.toLowerCase()}</small></strong><p>Classroom monitoring, RFID attendance, device health and reports.</p><button onClick={() => calculate(plan.id)}>Choose plan</button></article>)}</div><article className="panel coupon-panel"><h3>Have a discount token?</h3><div className="inline-form"><input value={code} onChange={e => setCode(e.target.value)} placeholder="Enter token code" /><button disabled={!plans[0]} onClick={() => plans[0] && calculate(plans[0].id)}>Apply and calculate</button></div>{quote && <div className="checkout-summary"><p className="success">Payable: ₹{quote.payableAmount.toLocaleString("en-IN")} ({quote.discountPercent}% discount).</p><button onClick={checkout}>Continue to Razorpay</button></div>}</article></>}{message && <p className="error">{message}</p>}</>;
+  return <><div className="page-intro"><div><h1>{user.role === "SUPER_ADMIN" ? "Subscription control" : "Choose your plan"}</h1><p className="muted">{user.role === "SUPER_ADMIN" ? "Manage plans and generate discount tokens for institutions." : "Start with a 15-day free trial. Upgrade whenever you are ready."}</p></div><span className="trial-badge">15 DAYS FREE</span></div>{subscriptionStatus && user.role !== "SUPER_ADMIN" && <article className="panel"><h3>Current subscription</h3><p className={subscriptionStatus.monitoringEnabled ? "success" : "error"}>{subscriptionStatus.status}{subscriptionStatus.trial ? " · 15-day trial" : ""}</p><small>{subscriptionStatus.monitoringEnabled ? `Monitoring enabled until ${subscriptionStatus.endsAt ? new Date(subscriptionStatus.endsAt).toLocaleDateString() : "renewal"}.` : "Monitoring is locked; historical data remains view-only."}</small></article>}{user.role === "SUPER_ADMIN" && <article className="panel form-panel"><h3>Generate discount token</h3><p className="muted">Create a coupon that institution admins can apply at checkout.</p><form onSubmit={createToken}><label>Token code<input required value={tokenCode} onChange={e => setTokenCode(e.target.value)} placeholder="WELCOME25" /></label><label>Discount percentage<input required type="number" min="0" max="100" step="0.01" value={discountPercent} onChange={e => setDiscountPercent(e.target.value)} /></label><label>Applies to<select value={appliesTo} onChange={e => setAppliesTo(e.target.value)}><option value="BOTH">Monthly and yearly</option><option value="MONTHLY">Monthly only</option><option value="YEARLY">Yearly only</option></select></label><label>Expiry date (optional)<input type="date" value={expiresAt} onChange={e => setExpiresAt(e.target.value)} /></label><button type="submit">Generate token</button></form>{createdToken && <p className="success">Token: <strong>{createdToken.code}</strong> · {createdToken.discountPercent}% off · {createdToken.appliesTo}</p>}</article>}{user.role !== "SUPER_ADMIN" && <><div className="plans">{plans.map(plan => <article className="plan-card" key={plan.id}><span className="plan-period">{plan.billingPeriod === "YEARLY" ? "BEST VALUE" : "FLEXIBLE"}</span><h3>{plan.name}</h3><strong>₹{plan.priceInr.toLocaleString("en-IN")}<small> / {plan.billingPeriod.toLowerCase()}</small></strong><p>Classroom monitoring, RFID attendance, device health and reports.</p><button onClick={() => calculate(plan.id)}>Choose plan</button></article>)}</div><article className="panel coupon-panel"><h3>Have a discount token?</h3><div className="inline-form"><input value={code} onChange={e => setCode(e.target.value)} placeholder="Enter token code" /><button disabled={!plans[0]} onClick={() => plans[0] && calculate(plans[0].id)}>Apply and calculate</button></div>{quote && <div className="checkout-summary"><p className="success">Payable: ₹{quote.payableAmount.toLocaleString("en-IN")} ({quote.discountPercent}% discount).</p><button onClick={checkout}>Continue to Razorpay</button></div>}</article></>}{message && <p className="error">{message}</p>}</>;
 }
 
 function loadRazorpay() {
   return new Promise<void>((resolve, reject) => {
     const existing = document.querySelector('script[src="https://checkout.razorpay.com/v1/checkout.js"]');
-    if (existing) { existing.addEventListener("load", () => resolve()); return; }
+    if (window.Razorpay) { resolve(); return; }
+    if (existing) {
+      existing.addEventListener("load", () => resolve(), { once: true });
+      existing.addEventListener("error", () => reject(new Error("Unable to load Razorpay checkout")), { once: true });
+      return;
+    }
     const script = document.createElement("script");
     script.src = "https://checkout.razorpay.com/v1/checkout.js";
     script.onload = () => resolve();
@@ -196,6 +216,6 @@ function loadRazorpay() {
 }
 
 function Placeholder({ title, items }: { title: string; items: string[] }) { return <article className="panel feature-panel"><h1>{title}</h1><p className="muted">This workspace is ready for the connected backend module.</p><div className="feature-grid">{items.map(item => <div className="feature-tile" key={item}><span className="tile-icon">✦</span><b>{item}</b><small>Configure and manage from this workspace</small></div>)}</div></article>; }
-function icon(item: string) { return ({ Overview: "⌂", Tenants: "◈", Institutions: "▦", Subscriptions: "◇", Subscription: "◇", Classrooms: "▤", Teachers: "♙", Timetable: "◫", "RFID & Attendance": "◉", Devices: "⌁", Reports: "▥" } as Record<string, string>)[item] ?? "•"; }
+function icon(item: string) { return ({ Overview: "⌂", Tenants: "◈", Institutions: "▦", Subscriptions: "◇", Subscription: "◇", Classrooms: "▤", Teachers: "♙", Timetable: "◫", "RFID & Attendance": "◉", Devices: "⌁", "Live Monitoring": "◉", Reports: "▥" } as Record<string, string>)[item] ?? "•"; }
 
 createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);

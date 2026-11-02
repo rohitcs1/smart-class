@@ -33,7 +33,7 @@ public class SecurityConfig {
         http.csrf(csrf -> csrf.disable()).cors(cors -> cors.configurationSource(corsSource()))
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(a -> a.requestMatchers("/api/health", "/api/auth/login", "/api/auth/register", "/api/subscriptions/plans",
-                                "/api/subscriptions/quote", "/api/device-events", "/api/device/**", "/error").permitAll()
+                                "/api/subscriptions/quote", "/api/device-events", "/api/device/**", "/api/payments/razorpay/webhook", "/error").permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll().anyRequest().authenticated())
                 .exceptionHandling(e -> e.authenticationEntryPoint(new HttpStatusEntryPoint(org.springframework.http.HttpStatus.UNAUTHORIZED)))
                 .addFilterBefore(new JwtFilter(jwtService), UsernamePasswordAuthenticationFilter.class);
@@ -58,6 +58,10 @@ public class SecurityConfig {
         @Override protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
                 throws ServletException, IOException {
             String header = request.getHeader("Authorization");
+            if (header == null) {
+                String queryToken = request.getParameter("token");
+                if (queryToken != null) header = "Bearer " + queryToken;
+            }
             if (header != null && header.startsWith("Bearer ")) {
                 try {
                     Claims claims = jwt.parse(header.substring(7));

@@ -11,16 +11,29 @@ import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import com.elneb.auth.UserRepository;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 @RestController
 @RequestMapping("/api/subscriptions")
 public class SubscriptionController {
     private final SubscriptionPlanRepository plans;
     private final DiscountTokenRepository tokens;
+    private final SubscriptionRepository subscriptions;
+    private final UserRepository users;
 
-    public SubscriptionController(SubscriptionPlanRepository plans, DiscountTokenRepository tokens) {
-        this.plans = plans;
-        this.tokens = tokens;
+    public SubscriptionController(SubscriptionPlanRepository plans, DiscountTokenRepository tokens, SubscriptionRepository subscriptions, UserRepository users) {
+        this.plans = plans; this.tokens = tokens; this.subscriptions=subscriptions; this.users=users;
+    }
+
+    @GetMapping("/status")
+    public StatusResponse status() {
+        var user=users.findById(UUID.fromString(SecurityContextHolder.getContext().getAuthentication().getName())).orElseThrow(() -> new IllegalArgumentException("User account not found"));
+        if(user.getTenant()==null) return new StatusResponse("PLATFORM",false,true,null,null,null);
+        var subscription=subscriptions.findTopByTenantIdOrderByEndsAtDesc(user.getTenant().getId()).orElse(null);
+        if(subscription==null) return new StatusResponse("UNSUBSCRIBED",false,false,null,null,null);
+        boolean active=subscription.getEndsAt().isAfter(Instant.now()) && subscription.getStatus()!=SubscriptionStatus.EXPIRED;
+        return new StatusResponse(active?subscription.getStatus().name():"EXPIRED",active,!active,subscription.getStartsAt(),subscription.getEndsAt(),subscription.isTrial());
     }
 
     @GetMapping("/plans")
@@ -70,6 +83,7 @@ public class SubscriptionController {
     public record QuoteRequest(@NotNull UUID planId, String discountCode) {}
     public record PlanResponse(UUID id, String name, BillingPeriod billingPeriod, BigDecimal priceInr) {}
     public record QuoteResponse(UUID planId, BigDecimal baseAmount, BigDecimal discountPercent, BigDecimal payableAmount, String currency) {}
+    public record StatusResponse(String status, boolean monitoringEnabled, boolean historicalViewOnly, Instant startsAt, Instant endsAt, Boolean trial) {}
     public record DiscountResponse(UUID id, String code, BigDecimal discountPercent, String appliesTo, boolean active, Instant expiresAt) {
         static DiscountResponse from(DiscountToken token) {
             return new DiscountResponse(token.getId(), token.getCode(), token.getDiscountPercent(), token.getAppliesTo(),

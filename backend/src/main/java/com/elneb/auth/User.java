@@ -5,6 +5,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 import java.time.Instant;
 import java.util.UUID;
+import com.elneb.tenant.Tenant;
 
 @Entity
 @Table(name = "users", uniqueConstraints = @UniqueConstraint(name = "uk_users_email", columnNames = "email"))
@@ -22,6 +23,9 @@ public class User {
     private Role role;
     @Column(nullable = false)
     private boolean active = true;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "tenant_id")
+    private Tenant tenant;
     @Column(nullable = false)
     private Instant createdAt = Instant.now();
 
@@ -31,6 +35,8 @@ public class User {
         this.passwordHash = passwordHash;
         this.role = role;
     }
+    public void assignTenant(Tenant tenant) { this.tenant = tenant; }
+    public Tenant getTenant() { return tenant; }
     public UUID getId() { return id; }
     public String getEmail() { return email; }
     public String getPasswordHash() { return passwordHash; }

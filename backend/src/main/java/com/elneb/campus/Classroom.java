@@ -17,6 +17,8 @@ public class Classroom extends UuidEntitySupport {
     private String roomType;
     @Column(nullable = false)
     private boolean active = true;
+    @Column(name = "camera_url", length = 1000)
+    private String cameraUrl;
     protected Classroom() {}
     public Classroom(Floor floor, String name, int capacity, String roomType) {
         this.floor = floor; this.name = name.trim(); this.capacity = capacity; this.roomType = roomType.trim();
@@ -26,4 +28,6 @@ public class Classroom extends UuidEntitySupport {
     public int getCapacity() { return capacity; }
     public String getRoomType() { return roomType; }
     public boolean isActive() { return active; }
+    public String getCameraUrl() { return cameraUrl; }
+    public void setCameraUrl(String cameraUrl) { this.cameraUrl = cameraUrl == null || cameraUrl.isBlank() ? null : cameraUrl.trim(); }
 }
