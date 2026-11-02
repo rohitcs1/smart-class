@@ -79,13 +79,13 @@ function Section({ section, user }: { section: string; user: User }) {
   if (section === "Subscriptions" || section === "Subscription") return <Subscription user={user} />;
   if (section === "Tenants") return <TenantManager />;
   if (section === "Institutions") return <InstitutionManager user={user} />;
-  if (section === "Classrooms") return <Placeholder title="Classroom management" items={["Campus structure", "Buildings and floors", "Room capacity", "Live occupancy"]} />;
-  if (section === "Teachers") return <Placeholder title="Teacher management" items={["Teacher profiles", "Departments", "RFID cards", "Assignments"]} />;
+  if (section === "Classrooms") return <ClassroomManager />;
+  if (section === "Teachers") return <TeacherManager />;
   if (section === "Timetable") return <TimetableManager />;
   if (section === "RFID & Attendance") return <AttendanceCenter />;
   if (section === "Devices") return <DeviceManager />;
   if (section === "Live Monitoring") return <LiveMonitoring />;
-  if (section === "Reports") return <Placeholder title="Reports and analytics" items={["Classroom utilization", "Teacher activity", "Device uptime", "Export CSV"]} />;
+  if (section === "Reports") return <Reports />;
   return <Overview user={user} />;
 }
 
@@ -104,6 +104,71 @@ function InstitutionManager({ user }: { user: User }) {
   const [tenantId, setTenantId] = useState(""); const [name, setName] = useState(""); const [code, setCode] = useState(""); const [address, setAddress] = useState(""); const [items, setItems] = useState<Institution[]>([]); const [message, setMessage] = useState("");
   async function create(event: React.FormEvent) { event.preventDefault(); try { const { data } = await api.post<Institution>(`/institutions/tenant/${tenantId}`, { name, code, address }); setItems([...items, data]); setMessage("Institution created."); } catch (e) { setMessage(errorText(e)); } }
   return <div className="two-col"><article className="panel form-panel"><h3>Add institution</h3><p className="muted">Connect an institution to a tenant workspace.</p><form onSubmit={create}><label>Tenant ID<input required value={tenantId} onChange={e => setTenantId(e.target.value)} placeholder="UUID from tenant setup" /></label><label>Institution name<input required value={name} onChange={e => setName(e.target.value)} /></label><label>Code<input required value={code} onChange={e => setCode(e.target.value)} /></label><label>Address<input value={address} onChange={e => setAddress(e.target.value)} /></label><button>Create institution</button>{message && <p className="success">{message}</p>}</form></article><article className="panel"><h3>Institutions</h3>{items.length ? items.map(item => <div className="list-row" key={item.id}><span className="avatar">{item.name[0]}</span><div><b>{item.name}</b><small>{item.code} · {item.active ? "Active" : "Inactive"}</small></div></div>) : <div className="empty-state"><span className="empty-icon">▦</span><b>No institutions loaded</b><p>Use the form to create your first institution.</p></div>}</article></div>;
+}
+
+type Campus = { id: string; name: string; address?: string; active: boolean };
+type NamedItem = { id: string; name: string; active: boolean };
+type Classroom = { id: string; name: string; capacity: number; roomType: string; active: boolean };
+type Teacher = { id: string; employeeCode: string; fullName: string; email?: string; department?: string; active: boolean };
+
+function ClassroomManager() {
+  const [institutionId, setInstitutionId] = useState(""); const [campusId, setCampusId] = useState("");
+  const [buildingId, setBuildingId] = useState(""); const [floorId, setFloorId] = useState("");
+  const [name, setName] = useState(""); const [address, setAddress] = useState("");
+  const [capacity, setCapacity] = useState("40"); const [roomType, setRoomType] = useState("LECTURE");
+  const [campuses, setCampuses] = useState<Campus[]>([]); const [buildings, setBuildings] = useState<NamedItem[]>([]);
+  const [floors, setFloors] = useState<NamedItem[]>([]); const [classrooms, setClassrooms] = useState<Classroom[]>([]);
+  const [message, setMessage] = useState("");
+  async function loadCampuses() { try { const { data } = await api.get<Campus[]>(`/campus/institution/${institutionId}`); setCampuses(data); setMessage(""); } catch (e) { setMessage(errorText(e)); } }
+  async function loadBuildings() { try { const { data } = await api.get<NamedItem[]>(`/campus/${campusId}/buildings`); setBuildings(data); } catch (e) { setMessage(errorText(e)); } }
+  async function loadFloors() { try { const { data } = await api.get<NamedItem[]>(`/campus/buildings/${buildingId}/floors`); setFloors(data); } catch (e) { setMessage(errorText(e)); } }
+  async function loadClassrooms() { try { const { data } = await api.get<Classroom[]>(`/campus/floors/${floorId}/classrooms`); setClassrooms(data); } catch (e) { setMessage(errorText(e)); } }
+  async function create(event: React.FormEvent) {
+    event.preventDefault();
+    try {
+      if (!campusId) { const { data } = await api.post<Campus>(`/campus/institution/${institutionId}`, { name, address }); setCampuses([...campuses, data]); setCampusId(data.id); setMessage("Campus created. Add a building next."); }
+      else if (!buildingId) { const { data } = await api.post<NamedItem>(`/campus/${campusId}/buildings`, { name }); setBuildings([...buildings, data]); setBuildingId(data.id); setMessage("Building created. Add a floor next."); }
+      else if (!floorId) { const { data } = await api.post<NamedItem>(`/campus/buildings/${buildingId}/floors`, { name }); setFloors([...floors, data]); setFloorId(data.id); setMessage("Floor created. Add a classroom next."); }
+      else { const { data } = await api.post<Classroom>(`/campus/floors/${floorId}/classrooms`, { name, capacity: Number(capacity), roomType }); setClassrooms([...classrooms, data]); setMessage("Classroom created."); }
+      setName(""); setAddress(""); await loadClassrooms();
+    } catch (e) { setMessage(errorText(e)); }
+  }
+  return <div className="two-col"><article className="panel form-panel"><h3>Build campus structure</h3><p className="muted">Create campus, building, floor and classroom records through the live API.</p>
+    <label>Institution ID<input required value={institutionId} onChange={e => setInstitutionId(e.target.value)} placeholder="Institution UUID" /></label><button className="small-button" type="button" onClick={loadCampuses} disabled={!institutionId}>Load campuses</button>
+    <label>Campus<select value={campusId} onChange={e => { setCampusId(e.target.value); setBuildingId(""); setFloorId(""); }}>{campuses.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+    {campusId && <button className="small-button" type="button" onClick={loadBuildings}>Load buildings</button>}
+    <label>Building<select value={buildingId} onChange={e => { setBuildingId(e.target.value); setFloorId(""); }}>{buildings.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+    {buildingId && <button className="small-button" type="button" onClick={loadFloors}>Load floors</button>}
+    <label>Floor<select value={floorId} onChange={e => setFloorId(e.target.value)}>{floors.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+    {floorId && <button className="small-button" type="button" onClick={loadClassrooms}>Load classrooms</button>}
+    <form onSubmit={create}><label>{floorId ? "Classroom name" : buildingId ? "Floor name" : campusId ? "Building name" : "Campus name"}<input required value={name} onChange={e => setName(e.target.value)} /></label>
+      {!campusId && <label>Address<input value={address} onChange={e => setAddress(e.target.value)} /></label>}
+      {floorId && <><label>Capacity<input type="number" min="1" value={capacity} onChange={e => setCapacity(e.target.value)} /></label><label>Room type<input value={roomType} onChange={e => setRoomType(e.target.value)} /></label></>}
+      <button type="submit">Create {floorId ? "classroom" : buildingId ? "floor" : campusId ? "building" : "campus"}</button></form>{message && <p className={message.includes("created") ? "success" : "error"}>{message}</p>}</article>
+    <article className="panel"><h3>Classrooms</h3>{classrooms.length ? classrooms.map(item => <div className="list-row" key={item.id}><div><b>{item.name}</b><small>{item.roomType} · Capacity {item.capacity} · {item.active ? "Active" : "Inactive"}</small></div><code>{item.id}</code></div>) : <div className="empty-state"><b>No classrooms loaded</b><p>Select a floor and load its classrooms.</p></div>}</article></div>;
+}
+
+function TeacherManager() {
+  const [institutionId, setInstitutionId] = useState(""); const [teacherId, setTeacherId] = useState("");
+  const [employeeCode, setEmployeeCode] = useState(""); const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState(""); const [department, setDepartment] = useState(""); const [cardUid, setCardUid] = useState("");
+  const [teachers, setTeachers] = useState<Teacher[]>([]); const [message, setMessage] = useState("");
+  async function load() { try { const { data } = await api.get<Teacher[]>(`/teachers/institution/${institutionId}`); setTeachers(data); setMessage(""); } catch (e) { setMessage(errorText(e)); } }
+  async function create(event: React.FormEvent) { event.preventDefault(); try { const { data } = await api.post<Teacher>(`/teachers/institution/${institutionId}`, { employeeCode, fullName, email, department }); setTeachers([...teachers, data]); setTeacherId(data.id); setMessage("Teacher created. You can assign an RFID card."); setEmployeeCode(""); setFullName(""); } catch (e) { setMessage(errorText(e)); } }
+  async function assign(event: React.FormEvent) { event.preventDefault(); try { await api.post(`/teachers/${teacherId}/rfid`, { cardUid }); setMessage("RFID card assigned."); setCardUid(""); } catch (e) { setMessage(errorText(e)); } }
+  return <div className="two-col"><div><article className="panel form-panel"><h3>Add teacher</h3><form onSubmit={create}><label>Institution ID<input required value={institutionId} onChange={e => setInstitutionId(e.target.value)} placeholder="Institution UUID" /></label><label>Employee code<input required value={employeeCode} onChange={e => setEmployeeCode(e.target.value)} /></label><label>Full name<input required value={fullName} onChange={e => setFullName(e.target.value)} /></label><label>Email<input type="email" value={email} onChange={e => setEmail(e.target.value)} /></label><label>Department<input value={department} onChange={e => setDepartment(e.target.value)} /></label><button type="submit">Create teacher</button></form></article><article className="panel form-panel"><h3>Assign RFID</h3><form onSubmit={assign}><label>Teacher ID<input required value={teacherId} onChange={e => setTeacherId(e.target.value)} /></label><label>Card UID<input required value={cardUid} onChange={e => setCardUid(e.target.value)} /></label><button type="submit">Assign card</button></form>{message && <p className={message.includes("created") || message.includes("assigned") ? "success" : "error"}>{message}</p>}</article></div><article className="panel"><div className="page-intro"><h3>Teachers</h3><button className="small-button" onClick={load} disabled={!institutionId}>Refresh</button></div>{teachers.length ? teachers.map(item => <div className="list-row" key={item.id}><div><b>{item.fullName}</b><small>{item.employeeCode} · {item.department || "No department"} · {item.email || "No email"}</small></div><code>{item.id}</code></div>) : <div className="empty-state"><b>No teachers loaded</b><p>Enter an institution ID and refresh.</p></div>}</article></div>;
+}
+
+type ReportSummary = { sessions: number; attendanceRecords: number; classrooms: number; teachers: number; devices: number; onlineDevices: number; present: number; completed: number };
+type ReportRow = Record<string, unknown>;
+
+function Reports() {
+  const [from, setFrom] = useState(new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10)); const [to, setTo] = useState(new Date().toISOString().slice(0, 10));
+  const [type, setType] = useState("attendance"); const [summary, setSummary] = useState<ReportSummary | null>(null); const [rows, setRows] = useState<ReportRow[]>([]); const [message, setMessage] = useState("");
+  async function load() { try { const params = { from, to }; const [summaryResponse, dataResponse] = await Promise.all([api.get<ReportSummary>("/reports/summary", { params }), api.get<ReportRow[]>(`/reports/${type}`, { params })]); setSummary(summaryResponse.data); setRows(dataResponse.data); setMessage(""); } catch (e) { setMessage(errorText(e)); } }
+  async function download(format: "csv" | "pdf") { try { const response = await api.get("/reports/export", { params: { type, format, from, to }, responseType: "blob" }); const url = URL.createObjectURL(response.data); const link = document.createElement("a"); link.href = url; link.download = `elneb-${type}.${format}`; link.click(); URL.revokeObjectURL(url); } catch (e) { setMessage(errorText(e)); } }
+  const columns = rows.length ? Object.keys(rows[0]) : [];
+  return <><article className="panel"><div className="page-intro"><div><h3>Reports and analytics</h3><p className="muted">Attendance, classroom utilization, teacher activity and device uptime.</p></div><div className="inline-form"><label>From<input type="date" value={from} onChange={e => setFrom(e.target.value)} /></label><label>To<input type="date" value={to} onChange={e => setTo(e.target.value)} /></label></div></div><div className="inline-form"><label>Report<select value={type} onChange={e => setType(e.target.value)}><option value="attendance">Attendance</option><option value="classroom-utilization">Classroom utilization</option><option value="teacher-activity">Teacher activity</option><option value="device-uptime">Device uptime</option></select></label><button onClick={load}>Load report</button><button className="small-button" onClick={() => download("csv")} disabled={!rows.length}>CSV</button><button className="small-button" onClick={() => download("pdf")} disabled={!rows.length}>PDF</button></div>{message && <p className="error">{message}</p>}</article>{summary && <div className="stats"><article className="stat"><span>Sessions</span><strong>{summary.sessions}</strong></article><article className="stat"><span>Attendance records</span><strong>{summary.attendanceRecords}</strong></article><article className="stat"><span>Classrooms</span><strong>{summary.classrooms}</strong></article><article className="stat"><span>Devices online</span><strong>{summary.onlineDevices}/{summary.devices}</strong></article></div>}<article className="panel"><h3>{type.replace("-", " ")} data</h3>{rows.length ? <div className="report-table"><table><thead><tr>{columns.map(column => <th key={column}>{column}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{columns.map(column => <td key={column}>{Array.isArray(row[column]) ? (row[column] as string[]).join(", ") : String(row[column] ?? "-")}</td>)}</tr>)}</tbody></table></div> : <div className="empty-state"><b>No report loaded</b><p>Choose a date range and load a report.</p></div>}</article></>;
 }
 
 type AttendanceSession = { id: string; teacherId: string; sessionDate: string; startsAt: string; endsAt: string; status: string; classroomIds: string[] };
